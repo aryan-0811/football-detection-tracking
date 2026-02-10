@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Ultralytics outputs
+runs/
+
+# macOS
+.DS_Store
+
+# Large files / local inputs
+input_videos/
+outputs/
+# models/*.pt
