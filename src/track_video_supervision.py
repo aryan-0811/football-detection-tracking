@@ -21,7 +21,7 @@ from ultralytics import YOLO
 
 def parse_args():
     p = argparse.ArgumentParser(description="YOLO tracking + Supervision annotation pipeline")
-    p.add_argument("--model", required=True, help="Path to YOLO weights (e.g., models/best.pt)")
+    p.add_argument("--model", required=True, help="Path to YOLO weights (e.g., models/object_detection/best.pt)")
     p.add_argument("--source", required=True, help="Path to input video (e.g., input_videos/input.mp4)")
     p.add_argument("--outdir", default="outputs", help="Output directory (default: outputs)")
     p.add_argument("--name", default=None, help="Output base name (no extension). Default: input video stem")
