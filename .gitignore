@@ -13,4 +13,5 @@ runs/
 # Large files / local inputs
 input_videos/
 outputs/
+artifacts/
 # models/*.pt
