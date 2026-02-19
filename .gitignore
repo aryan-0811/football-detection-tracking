@@ -14,4 +14,4 @@ runs/
 input_videos/
 outputs/
 artifacts/
-# models/*.pt
+models/pitch_keypoints/*.pt
