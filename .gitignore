@@ -15,3 +15,6 @@ input_videos/
 outputs/
 artifacts/
 models/pitch_keypoints/*.pt
+
+# environment
+.env

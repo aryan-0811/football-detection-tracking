@@ -44,6 +44,7 @@ pip install -U pip wheel setuptools
 ```bash
 pip install supervision ultralytics tqdm numpy opencv-python umap-learn scikit-learn
 pip install "transformers==4.46.3" "accelerate>=0.34.0" "sentencepiece" "protobuf"
+pip install roboflow inference  
 ```
 
 ### 3) Install the sports dependency (TeamClassifier)
