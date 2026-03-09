@@ -48,6 +48,14 @@ def parse_args():
     p.add_argument("--birdeye", action="store_true", help="Write bird-eye radar video output.")
     p.add_argument("--side-by-side", action="store_true", help="Write side-by-side video (left main, right bird-eye).")
 
+    # heatmaps
+    p.add_argument("--save-heatmaps", action="store_true",
+                   help="Save per-track/player heatmap images.")
+    p.add_argument("--heatmap-top-n", type=int, default=None,
+                   help="Save heatmaps only for the top N tracks by number of samples.")
+    p.add_argument("--heatmap-min-samples", type=int, default=30,
+                   help="Minimum number of projected samples required to save a heatmap.")
+
     return p.parse_args()
 
 
@@ -87,6 +95,9 @@ def main():
         kp_conf=args.kp_conf,
         birdeye=args.birdeye,
         side_by_side=args.side_by_side,
+        save_heatmaps=args.save_heatmaps,
+        heatmap_top_n=args.heatmap_top_n,
+        heatmap_min_samples=args.heatmap_min_samples,
     )
 
 

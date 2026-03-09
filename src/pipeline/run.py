@@ -18,6 +18,8 @@ from sports.configs.soccer import SoccerPitchConfiguration
 from src.pitch.birdeye import render_birdeye_frame
 from sports.annotators.soccer import draw_pitch
 
+from src.heatmap.player_heatmap import TrackHeatmapStore
+
 def make_empty_radar(pitch_config: SoccerPitchConfiguration, text: str | None = None) -> np.ndarray:
     radar = draw_pitch(pitch_config)
     if text:
@@ -100,6 +102,10 @@ def run_video_team_classification(
     # bird eye view
     birdeye: bool = False,
     side_by_side: bool = False,
+    # heatmaps
+    save_heatmaps: bool = False,
+    heatmap_top_n: int | None = None,
+    heatmap_min_samples: int = 30,
 ):
     video_info = sv.VideoInfo.from_video_path(str(source_path))
     frame_generator = sv.get_video_frames_generator(str(source_path))
@@ -117,17 +123,20 @@ def run_video_team_classification(
             pitch_config=pitch_config,
         )
         pitch.load_from_env()
-
-    # --- pitch debug output (overlay keypoints on real frames) ---
-    pitch_sink = None
-    pitch_debug_path = None
-    if pitch_debug:
+    
+    heatmap_store = None
+    heatmap_dir = None
+    if save_heatmaps:
         outdir = target_video_path.parent
         base = target_video_path.stem.replace("_team_tracked", "")
-        suffix = "_pitch_debug_preview.mp4" if max_frames is not None else "_pitch_debug.mp4"
-        pitch_debug_path = outdir / f"{base}{suffix}"
-        pitch_sink = sv.VideoSink(str(pitch_debug_path), video_info=video_info)
-        print("Pitch debug enabled:", pitch_debug_path)
+        suffix = "_heatmaps_preview" if max_frames is not None else "_heatmaps"
+        heatmap_dir = outdir / f"{base}{suffix}"
+
+        heatmap_store = TrackHeatmapStore(
+            pitch_config=pitch_config,
+            min_samples_to_save=heatmap_min_samples,
+        )
+        print("Heatmaps enabled:", heatmap_dir)
 
     # --- pitch debug output (overlay keypoints on real frames) ---
     pitch_sink = None
@@ -237,70 +246,69 @@ def run_video_team_classification(
 
                 video_sink.write_frame(annotated)
 
-                # --- bird-eye / side-by-side ---
-                if (birdeye_path is not None) or (sbs_path is not None):
+                # --- transformer-dependent outputs (birdeye / side-by-side / heatmaps) ---
+                if birdeye_path is not None or sbs_path is not None or heatmap_store is not None:
                     if pitch is None:
                         continue
 
                     transformer = pitch.maybe_get_transformer(frame, frame_idx=frame_idx)
-                    if transformer is None:
-                        # fallback radar frame so output videos remain playable / same length
-                        radar = make_empty_radar(pitch_config, text="NO TRANSFORMER")
-                    
-                    else:
-                        players_and_gk = sv.Detections.merge([players, goalkeepers])
+
+                    players_and_gk = sv.Detections.merge([players, goalkeepers])
+                    if len(players_and_gk) > 0 and players_and_gk.class_id is not None:
                         players_and_gk.class_id = players_and_gk.class_id.astype(int)
 
-                        radar = render_birdeye_frame(
-                            pitch_config=pitch_config,
-                            transformer=transformer,
-                            ball=ball,
-                            players_and_gk=players_and_gk,
-                            referees=referees,
-                        )
+                    # --- Heatmap accumulation ---
+                    if transformer is not None and heatmap_store is not None and len(players_and_gk) > 0:
+                        heatmap_store.update(players_and_gk, transformer)
 
-                    # ---- Lazy-init birdeye sink with correct size ----
-                    if birdeye_path is not None:
-                        if birdeye_sink is None:
-                            rh, rw = radar.shape[:2]
-                            birdeye_info = sv.VideoInfo(
-                                width=rw,
-                                height=rh,
-                                fps=video_info.fps,
-                                total_frames=video_info.total_frames,
+                    # --- Birdeye / side-by-side rendering ---
+                    if birdeye_path is not None or sbs_path is not None:
+                        if transformer is None:
+                            radar = make_empty_radar(pitch_config, text="NO TRANSFORMER")
+                        else:
+                            radar = render_birdeye_frame(
+                                pitch_config=pitch_config,
+                                transformer=transformer,
+                                ball=ball,
+                                players_and_gk=players_and_gk,
+                                referees=referees,
                             )
-                            birdeye_sink = sv.VideoSink(str(birdeye_path), video_info=birdeye_info)
-                            birdeye_sink.__enter__()
-                        birdeye_sink.write_frame(radar)
 
-                    # ---- Lazy-init sbs sink with correct size ----
-                    if sbs_path is not None:
-                        # Resize radar to match main frame height, then concat horizontally
-                        # h = annotated.shape[0]
-                        # rh, rw = radar.shape[:2]
-                        # new_w = int(rw * (h / rh))
-                        # radar_resized = cv2.resize(radar, (new_w, h), interpolation=cv2.INTER_AREA)
+                        # ---- Lazy-init birdeye sink with correct size ----
+                        if birdeye_path is not None:
+                            if birdeye_sink is None:
+                                rh, rw = radar.shape[:2]
+                                birdeye_info = sv.VideoInfo(
+                                    width=rw,
+                                    height=rh,
+                                    fps=video_info.fps,
+                                    total_frames=video_info.total_frames,
+                                )
+                                birdeye_sink = sv.VideoSink(str(birdeye_path), video_info=birdeye_info)
+                                birdeye_sink.__enter__()
+                            birdeye_sink.write_frame(radar)
 
-                        # sbs = cv2.hconcat([annotated, radar_resized])
-                        sbs = compose_main_with_radar_bottom_center(
-                            main_frame=annotated,
-                            radar_frame=radar,
-                            radar_width_ratio=0.40,  # tweak this
-                            pad=16,
-                        )
-
-                        if sbs_sink is None:
-                            sh, sw = sbs.shape[:2]
-                            sbs_info = sv.VideoInfo(
-                                width=sw,
-                                height=sh,
-                                fps=video_info.fps,
-                                total_frames=video_info.total_frames,
+                        # ---- Lazy-init side-by-side sink with correct size ----
+                        if sbs_path is not None:
+                            sbs = compose_main_with_radar_bottom_center(
+                                main_frame=annotated,
+                                radar_frame=radar,
+                                radar_width_ratio=0.40,
+                                pad=16,
                             )
-                            sbs_sink = sv.VideoSink(str(sbs_path), video_info=sbs_info)
-                            sbs_sink.__enter__()
 
-                        sbs_sink.write_frame(sbs)
+                            if sbs_sink is None:
+                                sh, sw = sbs.shape[:2]
+                                sbs_info = sv.VideoInfo(
+                                    width=sw,
+                                    height=sh,
+                                    fps=video_info.fps,
+                                    total_frames=video_info.total_frames,
+                                )
+                                sbs_sink = sv.VideoSink(str(sbs_path), video_info=sbs_info)
+                                sbs_sink.__enter__()
+
+                            sbs_sink.write_frame(sbs)
         finally:
             # Close lazily-opened sinks
             if birdeye_sink is not None:
@@ -309,6 +317,13 @@ def run_video_team_classification(
                 sbs_sink.__exit__(None, None, None)
 
     print("Saved:", target_video_path)
+    
+    if heatmap_store is not None and heatmap_dir is not None:
+        saved_heatmaps = heatmap_store.save_all(
+            out_dir=heatmap_dir,
+            top_n=heatmap_top_n,
+        )
+        print(f"Saved {len(saved_heatmaps)} heatmaps to: {heatmap_dir}")
     
     if pitch_debug_path is not None:
         print("Saved pitch debug:", pitch_debug_path)

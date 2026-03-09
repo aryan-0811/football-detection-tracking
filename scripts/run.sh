@@ -40,6 +40,10 @@ KP_CONF=0.5           # min keypoint confidence to accept/use for transformer
 SHOW_ID=true          # show tracker ID labels on players (true/false)
 FONT_SCALE=0.7        # label text size
 BOX_THICKNESS=2       # bounding box thickness
+
+SAVE_HEATMAPS=false   # save per-track/player heatmap PNGs
+HEATMAP_TOP_N=5       # keep top N tracks by sample count; empty = all
+HEATMAP_MIN_SAMPLES=40  # minimum projected samples required to save a heatmap
 # ----------------------------------------
 
 # Mode presets (you generally don’t edit these; tweak defaults above instead)
@@ -54,18 +58,21 @@ case "$MODE" in
     PITCH_DEBUG=true      # write pitch debug overlay video
     BIRDEYE=true          # write radar video
     SIDE_BY_SIDE=true     # write combined video
+    SAVE_HEATMAPS=true
     ;;
   full)
     MAX_FRAMES=""         # no frame cap
     PITCH_DEBUG=false     # usually off (saves time/output)
     BIRDEYE=true
     SIDE_BY_SIDE=true
+    SAVE_HEATMAPS=true
     ;;
   debug)
     MAX_FRAMES=300
     PITCH_DEBUG=true
     BIRDEYE=false
     SIDE_BY_SIDE=false
+    SAVE_HEATMAPS=false
     ;;
   *)
     echo "Unknown mode: $MODE (use preview|full|debug)"
@@ -91,6 +98,8 @@ CMD=(python -m src.track_video_supervision
   --pitch-stride "$PITCH_STRIDE"
   --kp-conf "$KP_CONF"
 
+  --heatmap-min-samples "$HEATMAP_MIN_SAMPLES"
+
   --font-scale "$FONT_SCALE"
   --box-thickness "$BOX_THICKNESS"
 )
@@ -112,6 +121,14 @@ if [[ "$BIRDEYE" == "true" ]]; then
 fi
 if [[ "$SIDE_BY_SIDE" == "true" ]]; then
   CMD+=(--side-by-side)          # write combined video
+fi
+
+if [[ "$SAVE_HEATMAPS" == "true" ]]; then
+  CMD+=(--save-heatmaps)
+fi
+
+if [[ -n "${HEATMAP_TOP_N:-}" ]]; then
+  CMD+=(--heatmap-top-n "$HEATMAP_TOP_N")
 fi
 
 echo "Mode: $MODE"
