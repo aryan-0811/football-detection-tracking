@@ -15,6 +15,7 @@ input_videos/
 outputs/
 artifacts/
 models/pitch_keypoints/*.pt
+models/ball_detection/*.pt
 
 # environment
 .env
