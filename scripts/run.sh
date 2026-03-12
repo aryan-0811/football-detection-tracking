@@ -44,6 +44,11 @@ BOX_THICKNESS=2       # bounding box thickness
 SAVE_HEATMAPS=false   # save per-track/player heatmap PNGs
 HEATMAP_TOP_N=5       # keep top N tracks by sample count; empty = all
 HEATMAP_MIN_SAMPLES=40  # minimum projected samples required to save a heatmap
+
+BALL_MODEL="models/ball_detection/best.pt"
+BALL_CONF=0.05
+BALL_MAX_JUMP_PX=80
+BALL_MIN_CONF=0.25
 # ----------------------------------------
 
 # Mode presets (you generally don’t edit these; tweak defaults above instead)
@@ -102,6 +107,11 @@ CMD=(python -m src.track_video_supervision
 
   --font-scale "$FONT_SCALE"
   --box-thickness "$BOX_THICKNESS"
+
+  --ball-model "$BALL_MODEL" \
+  --ball-conf "$BALL_CONF" \
+  --ball-max-jump-px "$BALL_MAX_JUMP_PX" \
+  --ball-min-conf "$BALL_MIN_CONF" \
 )
 
 # Optional flags

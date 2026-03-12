@@ -20,6 +20,8 @@ from sports.annotators.soccer import draw_pitch
 
 from src.heatmap.player_heatmap import TrackHeatmapStore
 
+from src.ball.detector import BallDetector
+
 def make_empty_radar(pitch_config: SoccerPitchConfiguration, text: str | None = None) -> np.ndarray:
     radar = draw_pitch(pitch_config)
     if text:
@@ -106,6 +108,11 @@ def run_video_team_classification(
     save_heatmaps: bool = False,
     heatmap_top_n: int | None = None,
     heatmap_min_samples: int = 30,
+    # ball model
+    ball_model_path: Path | None = None,
+    ball_conf: float = 0.05,
+    ball_max_jump_px: float = 80.0,
+    ball_min_conf: float = 0.25,
 ):
     video_info = sv.VideoInfo.from_video_path(str(source_path))
     frame_generator = sv.get_video_frames_generator(str(source_path))
@@ -169,7 +176,18 @@ def run_video_team_classification(
         sbs_path = outdir / f"{base}{suffix}"
         print("Side-by-side enabled:", sbs_path)
 
+    # Load models
     model = YOLO(str(model_path))
+
+    ball_detector = None
+    if ball_model_path is not None:
+        ball_detector = BallDetector(
+            model_path=ball_model_path,
+            conf=ball_conf,
+            max_jump_px=ball_max_jump_px,
+            min_conf=ball_min_conf,
+            imgsz=imgsz,
+        )
 
     # ---- Warmup fit ----
     assigner = TeamAssigner(device=team_device, smooth_window=team_smooth)
@@ -213,12 +231,76 @@ def run_video_team_classification(
                     pitch_sink.write_frame(dbg)
 
                 dets = detections_from_ultralytics(r)
+
+                # dedicated ball detection branch
+                if ball_detector is not None:
+                    ball = ball_detector.predict(frame)
+                else:
+                    ball = sv.Detections.empty()
+
+                # if no tracked non-ball detections, still allow ball-only annotation output
                 if len(dets) == 0:
-                    video_sink.write_frame(frame)
+                    annotated = frame.copy()
+                    if len(ball) > 0:
+                        annotated = triangle_annotator.annotate(scene=annotated, detections=ball)
+
+                    video_sink.write_frame(annotated)
+
+                    # if birdeye / sbs are enabled, still keep output videos playable
+                    if (birdeye_path is not None) or (sbs_path is not None):
+                        if pitch is None:
+                            continue
+
+                        transformer = pitch.maybe_get_transformer(frame, frame_idx=frame_idx)
+                        if transformer is None:
+                            radar = make_empty_radar(pitch_config, text="NO TRANSFORMER")
+                        else:
+                            radar = render_birdeye_frame(
+                                pitch_config=pitch_config,
+                                transformer=transformer,
+                                ball=ball,
+                                players_and_gk=sv.Detections.empty(),
+                                referees=sv.Detections.empty(),
+                            )
+
+                        if birdeye_path is not None:
+                            if birdeye_sink is None:
+                                rh, rw = radar.shape[:2]
+                                birdeye_info = sv.VideoInfo(
+                                    width=rw,
+                                    height=rh,
+                                    fps=video_info.fps,
+                                    total_frames=video_info.total_frames,
+                                )
+                                birdeye_sink = sv.VideoSink(str(birdeye_path), video_info=birdeye_info)
+                                birdeye_sink.__enter__()
+                            birdeye_sink.write_frame(radar)
+
+                        if sbs_path is not None:
+                            sbs = compose_main_with_radar_bottom_center(
+                                main_frame=annotated,
+                                radar_frame=radar,
+                                radar_width_ratio=0.40,
+                                pad=16,
+                            )
+
+                            if sbs_sink is None:
+                                sh, sw = sbs.shape[:2]
+                                sbs_info = sv.VideoInfo(
+                                    width=sw,
+                                    height=sh,
+                                    fps=video_info.fps,
+                                    total_frames=video_info.total_frames,
+                                )
+                                sbs_sink = sv.VideoSink(str(sbs_path), video_info=sbs_info)
+                                sbs_sink.__enter__()
+
+                            sbs_sink.write_frame(sbs)
+
                     continue
 
-                # split by detector classes
-                ball = dets[dets.class_id == ball_id]
+                # split tracked main detections by class
+                # IMPORTANT: ball is no longer taken from the main detector
                 goalkeepers = dets[dets.class_id == goalkeeper_id]
                 players = dets[dets.class_id == player_id]
                 referees = dets[dets.class_id == referee_id]
@@ -235,7 +317,7 @@ def run_video_team_classification(
                 if len(referees) > 0:
                     referees.class_id = np.full(len(referees), 2, dtype=int)
 
-                # merge for annotation (ball ignored in this v2 stage)
+                # merge for annotation
                 team_dets = sv.Detections.merge([players, goalkeepers, referees])
                 team_dets.class_id = team_dets.class_id.astype(int)
 

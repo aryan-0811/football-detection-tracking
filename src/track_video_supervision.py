@@ -55,6 +55,16 @@ def parse_args():
                    help="Save heatmaps only for the top N tracks by number of samples.")
     p.add_argument("--heatmap-min-samples", type=int, default=30,
                    help="Minimum number of projected samples required to save a heatmap.")
+    
+    # ball-only model
+    p.add_argument("--ball-model", type=str, default="models/ball_detection/best.pt",
+                   help="Path to dedicated ball-only YOLO model.")
+    p.add_argument("--ball-conf", type=float, default=0.05,
+                   help="Confidence threshold for the dedicated ball detector.")
+    p.add_argument("--ball-max-jump-px", type=float, default=80.0,
+                   help="Maximum allowed frame-to-frame jump for accepted ball detections.")
+    p.add_argument("--ball-min-conf", type=float, default=0.25,
+                   help="Minimum confidence required for accepted ball detections.")
 
     return p.parse_args()
 
@@ -98,6 +108,10 @@ def main():
         save_heatmaps=args.save_heatmaps,
         heatmap_top_n=args.heatmap_top_n,
         heatmap_min_samples=args.heatmap_min_samples,
+        ball_model_path=Path(args.ball_model) if args.ball_model else None,
+        ball_conf=args.ball_conf,
+        ball_max_jump_px=args.ball_max_jump_px,
+        ball_min_conf=args.ball_min_conf,
     )
 
 
