@@ -16,7 +16,7 @@ def resolve_goalkeepers_team_id(players: sv.Detections, goalkeepers: sv.Detectio
     team_0_centroid = players_xy[team0_mask].mean(axis=0)
     team_1_centroid = players_xy[team1_mask].mean(axis=0)
 
-    out = []    # goal keepers team id
+    out = []
     for gxy in goalkeepers_xy:
         d0 = np.linalg.norm(gxy - team_0_centroid)
         d1 = np.linalg.norm(gxy - team_1_centroid)

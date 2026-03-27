@@ -43,7 +43,7 @@ def parse_args():
                         help="Run pitch keypoints inference every N frames. Default: 15.")
     p.add_argument("--kp-conf", type=float, default=0.5,
                         help="Minimum keypoint confidence to draw. Default: 0.5.")
-    
+
     # birdeye view
     p.add_argument("--birdeye", action="store_true", help="Write bird-eye radar video output.")
     p.add_argument("--side-by-side", action="store_true", help="Write side-by-side video (left main, right bird-eye).")
@@ -65,7 +65,7 @@ def parse_args():
                    help="Maximum allowed frame-to-frame jump for accepted ball detections.")
     p.add_argument("--ball-min-conf", type=float, default=0.25,
                    help="Minimum confidence required for accepted ball detections.")
-    
+
     return p.parse_args()
 
 

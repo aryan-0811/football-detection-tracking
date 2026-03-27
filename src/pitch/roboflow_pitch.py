@@ -70,7 +70,6 @@ class RoboflowPitch:
             if self._is_good(kps):
                 self.last_kps = kps
                 self.last_update_frame_idx = frame_idx
-                # invalidate transformer until rebuilt (or rebuild immediately in maybe_get_transformer)
                 self.last_transformer = None
 
         except Exception as e:

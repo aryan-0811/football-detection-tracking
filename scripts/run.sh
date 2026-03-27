@@ -60,7 +60,7 @@ SIDE_BY_SIDE=false    # output combined video (main + radar)
 
 case "$MODE" in
   preview)
-    MAX_FRAMES=100        # process only first 300 frames
+    MAX_FRAMES=100        # process only first 100 frames
     PITCH_DEBUG=true      # write pitch debug overlay video
     BIRDEYE=true          # write radar video
     SIDE_BY_SIDE=true     # write combined video

@@ -18,10 +18,7 @@ def _xyxy_center(xyxy: np.ndarray) -> np.ndarray:
 
 
 def _result_to_sv_detections(result) -> sv.Detections:
-    """
-    Convert one Ultralytics result into sv.Detections.
-    Assumes ball-only model, but keeps all returned candidates.
-    """
+    """Convert one Ultralytics result into sv.Detections."""
     boxes = getattr(result, "boxes", None)
     if boxes is None or len(boxes) == 0:
         return _empty_ball_detection()
@@ -65,7 +62,6 @@ class BallDetector:
 
         centers = np.array([_xyxy_center(box) for box in xyxy], dtype=np.float32)
 
-        # If no previous center exists, start from the highest-confidence candidate.
         if self.prev_center is None:
             best_idx = int(np.argmax(conf))
         else:

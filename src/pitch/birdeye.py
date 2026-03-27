@@ -24,7 +24,6 @@ def render_birdeye_frame(
 
     pitch_img = draw_pitch(pitch_config)
 
-    # --- Project anchors (bottom-center) ---
     if len(ball) > 0:
         ball_xy = ball.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
         pitch_ball_xy = transformer.transform_points(points=ball_xy)
@@ -41,7 +40,6 @@ def render_birdeye_frame(
         pg_xy = players_and_gk.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
         pitch_pg_xy = transformer.transform_points(points=pg_xy)
 
-        # team 0
         mask0 = players_and_gk.class_id.astype(int) == 0
         if mask0.any():
             pitch_img = draw_points_on_pitch(
@@ -53,7 +51,6 @@ def render_birdeye_frame(
                 pitch=pitch_img,
             )
 
-        # team 1
         mask1 = players_and_gk.class_id.astype(int) == 1
         if mask1.any():
             pitch_img = draw_points_on_pitch(
@@ -65,7 +62,6 @@ def render_birdeye_frame(
                 pitch=pitch_img,
             )
 
-        # other (e.g. unknown GK = 2)
         mask2 = players_and_gk.class_id.astype(int) == 2
         if mask2.any():
             pitch_img = draw_points_on_pitch(

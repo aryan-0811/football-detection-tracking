@@ -272,3 +272,12 @@ Use CPU mode: `--team-device cpu`
 - **football-updated-2024** (Roboflow, CC BY 4.0) — object detection training data
 - **football-field-detection** (Roboflow, CC BY 4.0) — pitch keypoint training data
 - **ball_detection** (Roboflow, CC BY 4.0) — ball-only detection training data
+
+### AI Assistance
+AI tools (Claude, ChatGPT) were used during development as a productivity aid:
+- Summarising and explaining library documentation (Ultralytics, Supervision, Roboflow)
+- Helping understand complex topics (homography transformations, UMAP embedding spaces, tracking algorithms)
+- Assisting with debugging, code structuring, and writing boilerplate/utility code
+- Drafting and formatting this README
+
+All pipeline design decisions, architecture, model training, and integration work are my own.
