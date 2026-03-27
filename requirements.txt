@@ -1,0 +1,18 @@
+supervision
+ultralytics
+tqdm
+numpy
+opencv-python
+umap-learn
+scikit-learn
+transformers==4.46.3
+accelerate>=0.34.0
+sentencepiece
+protobuf
+roboflow
+inference
+python-dotenv
+
+# Roboflow sports library (TeamClassifier) — install separately from source:
+# git clone https://github.com/roboflow/sports.git
+# pip install -e ./sports

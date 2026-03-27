@@ -188,7 +188,7 @@ def run_video_team_classification(
             min_conf=ball_min_conf,
             imgsz=imgsz,
         )
-
+    
     # ---- Warmup fit ----
     assigner = TeamAssigner(device=team_device, smooth_window=team_smooth)
     warmup = WarmupConfig(seconds=warmup_seconds, stride=warmup_stride, max_crops=max_warmup_crops,
@@ -243,7 +243,7 @@ def run_video_team_classification(
                     annotated = frame.copy()
                     if len(ball) > 0:
                         annotated = triangle_annotator.annotate(scene=annotated, detections=ball)
-
+                    
                     video_sink.write_frame(annotated)
 
                     # if birdeye / sbs are enabled, still keep output videos playable

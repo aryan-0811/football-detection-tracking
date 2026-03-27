@@ -49,6 +49,7 @@ BALL_MODEL="models/ball_detection/best.pt"
 BALL_CONF=0.05
 BALL_MAX_JUMP_PX=80
 BALL_MIN_CONF=0.25
+
 # ----------------------------------------
 
 # Mode presets (you generally don’t edit these; tweak defaults above instead)
@@ -59,7 +60,7 @@ SIDE_BY_SIDE=false    # output combined video (main + radar)
 
 case "$MODE" in
   preview)
-    MAX_FRAMES=300        # process only first 300 frames
+    MAX_FRAMES=100        # process only first 300 frames
     PITCH_DEBUG=true      # write pitch debug overlay video
     BIRDEYE=true          # write radar video
     SIDE_BY_SIDE=true     # write combined video
@@ -112,6 +113,7 @@ CMD=(python -m src.track_video_supervision
   --ball-conf "$BALL_CONF" \
   --ball-max-jump-px "$BALL_MAX_JUMP_PX" \
   --ball-min-conf "$BALL_MIN_CONF" \
+
 )
 
 # Optional flags

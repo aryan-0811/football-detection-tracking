@@ -65,7 +65,7 @@ def parse_args():
                    help="Maximum allowed frame-to-frame jump for accepted ball detections.")
     p.add_argument("--ball-min-conf", type=float, default=0.25,
                    help="Minimum confidence required for accepted ball detections.")
-
+    
     return p.parse_args()
 
 
