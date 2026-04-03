@@ -360,9 +360,10 @@ def run_video_team_classification(
                     )
 
                 # --- annotate main video ---
-                labels = make_team_labels(team_dets, show_id=show_id)
                 annotated = box_annot.annotate(scene=frame.copy(), detections=team_dets)
-                annotated = label_annot.annotate(scene=annotated, detections=team_dets, labels=labels)
+                if show_id:
+                    labels = make_team_labels(team_dets, show_id=show_id)
+                    annotated = label_annot.annotate(scene=annotated, detections=team_dets, labels=labels)
                 annotated = triangle_annotator.annotate(scene=annotated, detections=ball)
 
                 # Offside overlay on main video
