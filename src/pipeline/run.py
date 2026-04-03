@@ -12,6 +12,7 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 from src.ball.detector import BallDetector
+from src.ball.offside import OffsideDetector, FrameOffsideState
 from src.heatmap.player_heatmap import TrackHeatmapStore
 from src.pitch.birdeye import render_birdeye_frame
 from src.pitch.roboflow_pitch import RoboflowPitch, PitchConfig
@@ -96,6 +97,26 @@ def compose_main_with_radar_bottom_center(
     return out
 
 
+def _draw_offside_on_frame(
+    frame: np.ndarray,
+    team_dets: sv.Detections,
+    offside_track_ids: set[int],
+) -> np.ndarray:
+    """Draw red bounding boxes and 'OFFSIDE' text for offside players on the main video."""
+    if team_dets.tracker_id is None:
+        return frame
+    for i, tid in enumerate(team_dets.tracker_id):
+        if int(tid) not in offside_track_ids:
+            continue
+        x1, y1, x2, y2 = team_dets.xyxy[i].astype(int)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+        cv2.putText(
+            frame, "OFFSIDE", (x1, y1 - 10),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2,
+        )
+    return frame
+
+
 def _render_and_write_radar(
     pitch_config: SoccerPitchConfiguration,
     transformer,
@@ -105,6 +126,7 @@ def _render_and_write_radar(
     annotated: np.ndarray,
     birdeye_writer: _LazyVideoSink | None,
     sbs_writer: _LazyVideoSink | None,
+    offside_state: FrameOffsideState | None = None,
 ) -> None:
     """Render the bird-eye radar frame and write to birdeye / side-by-side sinks."""
     if birdeye_writer is None and sbs_writer is None:
@@ -119,6 +141,7 @@ def _render_and_write_radar(
             ball=ball,
             players_and_gk=players_and_gk,
             referees=referees,
+            offside_state=offside_state,
         )
 
     if birdeye_writer is not None:
@@ -173,6 +196,8 @@ def run_video_team_classification(
     ball_conf: float = 0.05,
     ball_max_jump_px: float = 80.0,
     ball_min_conf: float = 0.25,
+    # offside detection
+    offside: bool = False,
 ):
     video_info = sv.VideoInfo.from_video_path(str(source_path))
     frame_generator = sv.get_video_frames_generator(str(source_path))
@@ -182,7 +207,7 @@ def run_video_team_classification(
     pitch_config = SoccerPitchConfiguration()
 
     pitch = None
-    if pitch_debug or birdeye or side_by_side:
+    if pitch_debug or birdeye or side_by_side or offside:
         pitch = RoboflowPitch(
             PitchConfig(stride=pitch_stride, kp_conf=kp_conf),
             pitch_config=pitch_config,
@@ -198,6 +223,13 @@ def run_video_team_classification(
             min_samples_to_save=heatmap_min_samples,
         )
         print("Heatmaps enabled:", heatmap_dir)
+
+    offside_detector = None
+    offside_log_path = None
+    if offside:
+        offside_detector = OffsideDetector(pitch_length=float(pitch_config.length))
+        offside_log_path = _output_path(target_video_path, "offside_events", preview, ext=".json")
+        print("Offside detection enabled")
 
     pitch_sink = None
     pitch_debug_path = None
@@ -307,27 +339,51 @@ def run_video_team_classification(
                 team_dets = sv.Detections.merge([players, goalkeepers, referees])
                 team_dets.class_id = team_dets.class_id.astype(int)
 
+                players_and_gk = sv.Detections.merge([players, goalkeepers])
+                if len(players_and_gk) > 0 and players_and_gk.class_id is not None:
+                    players_and_gk.class_id = players_and_gk.class_id.astype(int)
+
+                # --- pitch projection (needed for offside / heatmaps / radar) ---
+                transformer = None
+                if pitch is not None:
+                    transformer = pitch.maybe_get_transformer(frame, frame_idx=frame_idx)
+
+                # --- offside detection ---
+                offside_state = FrameOffsideState()
+                if offside_detector is not None and transformer is not None:
+                    offside_state = offside_detector.update(
+                        frame_idx=frame_idx,
+                        ball=ball,
+                        players=players,
+                        goalkeepers=goalkeepers,
+                        transformer=transformer,
+                    )
+
+                # --- annotate main video ---
                 labels = make_team_labels(team_dets, show_id=show_id)
                 annotated = box_annot.annotate(scene=frame.copy(), detections=team_dets)
                 annotated = label_annot.annotate(scene=annotated, detections=team_dets, labels=labels)
                 annotated = triangle_annotator.annotate(scene=annotated, detections=ball)
 
+                # Offside overlay on main video
+                if offside_state.active and offside_state.offside_track_ids:
+                    annotated = _draw_offside_on_frame(
+                        annotated, team_dets, offside_state.offside_track_ids,
+                    )
+
                 video_sink.write_frame(annotated)
 
-                if (birdeye_writer or sbs_writer or heatmap_store) and pitch is not None:
-                    transformer = pitch.maybe_get_transformer(frame, frame_idx=frame_idx)
+                # --- heatmaps ---
+                if transformer is not None and heatmap_store is not None and len(players_and_gk) > 0:
+                    heatmap_store.update(players_and_gk, transformer)
 
-                    players_and_gk = sv.Detections.merge([players, goalkeepers])
-                    if len(players_and_gk) > 0 and players_and_gk.class_id is not None:
-                        players_and_gk.class_id = players_and_gk.class_id.astype(int)
-
-                    if transformer is not None and heatmap_store is not None and len(players_and_gk) > 0:
-                        heatmap_store.update(players_and_gk, transformer)
-
+                # --- bird-eye / side-by-side ---
+                if birdeye_writer or sbs_writer:
                     _render_and_write_radar(
                         pitch_config, transformer, ball,
                         players_and_gk, referees,
                         annotated, birdeye_writer, sbs_writer,
+                        offside_state=offside_state,
                     )
         finally:
             if birdeye_writer is not None:
@@ -336,6 +392,12 @@ def run_video_team_classification(
                 sbs_writer.close()
 
     print("Saved:", target_video_path)
+
+    if offside_detector is not None and offside_log_path is not None:
+        offside_detector.save_events(offside_log_path)
+        n_pass = len(offside_detector.pass_events)
+        n_off = len(offside_detector.offside_events)
+        print(f"Offside: {n_pass} passes detected, {n_off} offside events → {offside_log_path}")
 
     if heatmap_store is not None and heatmap_dir is not None:
         saved_heatmaps = heatmap_store.save_all(

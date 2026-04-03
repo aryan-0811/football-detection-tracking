@@ -50,6 +50,8 @@ BALL_CONF=0.05
 BALL_MAX_JUMP_PX=80
 BALL_MIN_CONF=0.25
 
+OFFSIDE=false             # enable offside detection (needs ball model + pitch keypoints)
+
 # ----------------------------------------
 
 # Mode presets (you generally don’t edit these; tweak defaults above instead)
@@ -65,6 +67,7 @@ case "$MODE" in
     BIRDEYE=true          # write radar video
     SIDE_BY_SIDE=true     # write combined video
     SAVE_HEATMAPS=true
+    OFFSIDE=true          # enable offside detection
     ;;
   full)
     MAX_FRAMES=""         # no frame cap
@@ -72,6 +75,7 @@ case "$MODE" in
     BIRDEYE=true
     SIDE_BY_SIDE=true
     SAVE_HEATMAPS=true
+    OFFSIDE=true          # enable offside detection
     ;;
   debug)
     MAX_FRAMES=300
@@ -137,6 +141,9 @@ fi
 
 if [[ "$SAVE_HEATMAPS" == "true" ]]; then
   CMD+=(--save-heatmaps)
+fi
+if [[ "$OFFSIDE" == "true" ]]; then
+  CMD+=(--offside)                   # enable offside detection
 fi
 
 if [[ -n "${HEATMAP_TOP_N:-}" ]]; then

@@ -56,6 +56,10 @@ def parse_args():
     p.add_argument("--heatmap-min-samples", type=int, default=30,
                    help="Minimum number of projected samples required to save a heatmap.")
     
+    # offside detection
+    p.add_argument("--offside", action="store_true",
+                   help="Enable offside detection (requires ball model + pitch keypoints).")
+
     # ball-only model
     p.add_argument("--ball-model", type=str, default="models/ball_detection/best.pt",
                    help="Path to dedicated ball-only YOLO model.")
@@ -112,6 +116,7 @@ def main():
         ball_conf=args.ball_conf,
         ball_max_jump_px=args.ball_max_jump_px,
         ball_min_conf=args.ball_min_conf,
+        offside=args.offside,
     )
 
 
