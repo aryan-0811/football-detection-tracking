@@ -8,6 +8,7 @@ A computer vision pipeline for analysing broadcast football videos. It detects p
 - **v2 — Team Classification (Unsupervised):** Assigns players to Team 0 / Team 1 using **SigLIP embeddings -> UMAP -> KMeans** (via Roboflow's `sports` TeamClassifier), with track-level majority-vote smoothing and a goalkeeper-to-team heuristic.
 - **v3 — Bird-eye View:** Projects player positions onto a 2D pitch diagram using Roboflow-hosted pitch keypoint detection + ViewTransformer homography, with stride-based caching. Outputs a radar video and an optional side-by-side composite.
 - **v4 — Ball Detection:** Dedicated YOLO ball-only model with temporal smoothing (closest-center selection + max-jump filtering) for robust ball tracking independent of the main detector.
+- **v5 — Offside Detection:** Automated offside detection using pitch-space coordinates. Tracks ball possession, detects passes, and checks whether any attacking teammate is in an offside position at the moment the ball is played. Auto-detects attacking direction from team positions. Visualised on both the main video (red bounding boxes + text) and the bird-eye view (red dashed offside line + red player markers). All pass and offside events are logged to a JSON file.
 
 ---
 
@@ -26,6 +27,7 @@ src/
     gk_resolver.py — goalkeeper-to-team assignment via nearest centroid distance
   ball/
     detector.py   — dedicated YOLO ball model with temporal smoothing
+    offside.py    — pass detection + offside checking in pitch-space coordinates
   pitch/
     roboflow_pitch.py — Roboflow keypoint inference (stride-based, cached), builds ViewTransformer
     birdeye.py        — bird-eye radar view rendering with team-coloured markers
@@ -139,6 +141,7 @@ python -m src.track_video_supervision \
   --ball-conf 0.05 \
   --ball-max-jump-px 80 \
   --ball-min-conf 0.25 \
+  --offside \
   --birdeye \
   --side-by-side \
   --pitch-stride 15 \
@@ -163,6 +166,7 @@ All outputs are written to `outputs/` (gitignored). For input video `input.mp4`,
 | `input_birdeye.mp4` | `--birdeye` | Bird-eye radar view showing player positions projected onto a 2D pitch |
 | `input_side_by_side.mp4` | `--side-by-side` | Composite video: main annotated frame on top, radar view below |
 | `input_pitch_debug.mp4` | `--pitch-debug` | Debug video with Roboflow pitch keypoints overlaid on raw frames |
+| `input_offside_events.json` | `--offside` | JSON log of all detected passes and offside events with pitch coordinates |
 | `input_heatmaps/` | `--save-heatmaps` | Per-player heatmap PNGs (and raw `.npy` arrays) showing pitch-space activity |
 
 When `--max-frames` is set, output filenames include a `_preview` suffix.
@@ -193,6 +197,7 @@ Frame
  -> (Optional) Dedicated ball model detection with temporal coherence filtering
  -> (Optional) Pitch keypoint inference (every --pitch-stride frames, cached between)
  -> (Optional) Bird-eye projection via ViewTransformer homography
+ -> (Optional) Offside detection: possession tracking, pass detection, offside line check
  -> (Optional) Heatmap accumulation in pitch-space
  -> Write annotated frame(s) to output video(s)
 ```
