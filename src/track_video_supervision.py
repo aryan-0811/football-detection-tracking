@@ -60,6 +60,10 @@ def parse_args():
     p.add_argument("--offside", action="store_true",
                    help="Enable offside detection (requires ball model + pitch keypoints).")
 
+    # match stats
+    p.add_argument("--save-stats", action="store_true",
+                   help="Save match statistics (speed, distance, passes, possession) to JSON.")
+
     # ball-only model
     p.add_argument("--ball-model", type=str, default="models/ball_detection/best.pt",
                    help="Path to dedicated ball-only YOLO model.")
@@ -117,6 +121,7 @@ def main():
         ball_max_jump_px=args.ball_max_jump_px,
         ball_min_conf=args.ball_min_conf,
         offside=args.offside,
+        save_stats=args.save_stats,
     )
 
 

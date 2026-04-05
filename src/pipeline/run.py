@@ -16,6 +16,7 @@ from src.ball.offside import OffsideDetector, FrameOffsideState
 from src.heatmap.player_heatmap import TrackHeatmapStore
 from src.pitch.birdeye import render_birdeye_frame
 from src.pitch.roboflow_pitch import RoboflowPitch, PitchConfig
+from src.stats.tracker import StatsTracker
 from src.team.assigner import TeamAssigner, WarmupConfig
 from src.team.gk_resolver import resolve_goalkeepers_team_id
 from .annotate import make_team_annotators, make_team_labels
@@ -198,6 +199,8 @@ def run_video_team_classification(
     ball_min_conf: float = 0.25,
     # offside detection
     offside: bool = False,
+    # match stats
+    save_stats: bool = False,
 ):
     video_info = sv.VideoInfo.from_video_path(str(source_path))
     frame_generator = sv.get_video_frames_generator(str(source_path))
@@ -207,7 +210,7 @@ def run_video_team_classification(
     pitch_config = SoccerPitchConfiguration()
 
     pitch = None
-    if pitch_debug or birdeye or side_by_side or offside:
+    if pitch_debug or birdeye or side_by_side or offside or save_stats:
         pitch = RoboflowPitch(
             PitchConfig(stride=pitch_stride, kp_conf=kp_conf),
             pitch_config=pitch_config,
@@ -230,6 +233,13 @@ def run_video_team_classification(
         offside_detector = OffsideDetector(pitch_length=float(pitch_config.length))
         offside_log_path = _output_path(target_video_path, "offside_events", preview, ext=".json")
         print("Offside detection enabled")
+
+    stats_tracker = None
+    stats_path = None
+    if save_stats:
+        stats_path = _output_path(target_video_path, "stats", preview, ext=".json")
+        stats_tracker = StatsTracker(fps=video_info.fps)
+        print("Stats enabled:", stats_path)
 
     pitch_sink = None
     pitch_debug_path = None
@@ -378,6 +388,10 @@ def run_video_team_classification(
                 if transformer is not None and heatmap_store is not None and len(players_and_gk) > 0:
                     heatmap_store.update(players_and_gk, transformer)
 
+                # --- stats ---
+                if transformer is not None and stats_tracker is not None and len(players_and_gk) > 0:
+                    stats_tracker.update(players_and_gk, ball, transformer)
+
                 # --- bird-eye / side-by-side ---
                 if birdeye_writer or sbs_writer:
                     _render_and_write_radar(
@@ -406,6 +420,14 @@ def run_video_team_classification(
             top_n=heatmap_top_n,
         )
         print(f"Saved {len(saved_heatmaps)} heatmaps to: {heatmap_dir}")
+
+    if stats_tracker is not None and stats_path is not None:
+        stats_tracker.save(stats_path)
+        summary = stats_tracker.summary()
+        ms = summary["match_stats"]
+        print(f"Stats: {ms['total_passes']} passes, "
+              f"possession {ms['possession_pct']}")
+        print(f"Saved stats: {stats_path}")
 
     if pitch_debug_path is not None:
         print("Saved pitch debug:", pitch_debug_path)

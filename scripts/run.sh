@@ -51,6 +51,7 @@ BALL_MAX_JUMP_PX=80
 BALL_MIN_CONF=0.25
 
 OFFSIDE=false             # enable offside detection (needs ball model + pitch keypoints)
+SAVE_STATS=false          # save match statistics (speed, distance, passes, possession)
 
 # ----------------------------------------
 
@@ -68,6 +69,7 @@ case "$MODE" in
     SIDE_BY_SIDE=true     # write combined video
     SAVE_HEATMAPS=true
     OFFSIDE=true          # enable offside detection
+    SAVE_STATS=true       # save match statistics
     ;;
   full)
     MAX_FRAMES=""         # no frame cap
@@ -76,6 +78,7 @@ case "$MODE" in
     SIDE_BY_SIDE=true
     SAVE_HEATMAPS=true
     OFFSIDE=true          # enable offside detection
+    SAVE_STATS=true       # save match statistics
     ;;
   debug)
     MAX_FRAMES=300
@@ -144,6 +147,9 @@ if [[ "$SAVE_HEATMAPS" == "true" ]]; then
 fi
 if [[ "$OFFSIDE" == "true" ]]; then
   CMD+=(--offside)                   # enable offside detection
+fi
+if [[ "$SAVE_STATS" == "true" ]]; then
+  CMD+=(--save-stats)                # save match statistics
 fi
 
 if [[ -n "${HEATMAP_TOP_N:-}" ]]; then
