@@ -1,0 +1,64 @@
+\documentclass[12pt,BSc,wordcount,twoside]{muthesis}
+% The regulations say that 12pt should be used
+% Change the BSc option to MSc, MPhil, MRes or PhD if appropriate
+% Add 'anon' to the above options to replace your name with your student ID
+
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{url} % typeset URL's reasonably
+\usepackage{listings}
+
+\usepackage{pslatex} % Use Postscript fonts
+\usepackage{hyperref} % Load last to avoid conflicts
+
+% Tell LaTeX where to find images
+\graphicspath{{images/}}
+
+% Uncomment the next line if you want subsubsections to be numbered
+%\setcounter{secnumdepth}{3}
+% Uncomment the next line if you want subsubsections to appear in
+% the table of contents
+%\setcounter{tocdepth}{3}
+
+\begin{document}
+
+% Uncomment the following lines to leave out list of figures, tables
+% and copyright until final printing
+%\figurespagefalse
+%\tablespagefalse
+%\copyrightfalse
+
+\title{Automated Detection, Tracking and Tactical Analysis in Broadcast Football Video}
+\author{Aryan Tiwari}
+\stuid{11016004}
+\principaladviser{Dr Aphrodite Galata}
+
+\beforeabstract
+
+\prefacesection{Abstract}
+\input{abstract}
+
+\afterabstract
+
+\prefacesection{Acknowledgements}
+\input{frontmatter/acknowledgements}
+
+\afterpreface
+
+% --- Main chapters ---
+\include{chapters/01-introduction}
+\include{chapters/02-background}
+\include{chapters/03-methodology}
+\include{chapters/04-results}
+\include{chapters/05-evaluation}
+\include{chapters/06-conclusion}
+
+% --- Bibliography ---
+\bibliography{refs}
+\bibliographystyle{abbrv}
+
+% --- Appendices ---
+\appendix
+\include{appendices/appendix-a}
+
+\end{document}
