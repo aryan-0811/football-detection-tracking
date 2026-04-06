@@ -1,8 +1,102 @@
 \chapter{Introduction}
 \label{ch:introduction}
 
-\section{Motivation}
+\section{Motivation and Context}
+\label{sec:motivation}
+
+The use of data and analytics in professional football has expanded substantially in recent years, with clubs and national federations increasingly incorporating analytical workflows into performance analysis and decision-making \cite{Lolli2024}. In particular, positional and tracking data are valuable because they enable richer descriptions of player movement, team organisation and tactical behaviour than are possible from traditional notational analysis alone \cite{Goes2021}.
+
+Despite this growing importance, high-quality football data remain difficult to obtain. Advanced event and tracking data are often proprietary, expensive, or dependent on substantial manual collection, which limits their accessibility outside elite settings \cite{VidalCodina2022}. This creates a strong motivation to investigate alternative ways of generating structured football data from more widely available inputs.
+
+Broadcast video is a particularly attractive source for this purpose. Unlike specialised tracking systems or instrumented capture environments, broadcast footage is widely available and already captures much of the spatial and contextual information required for match analysis. However, extracting reliable structured data from broadcast footage is technically challenging. Prior work on broadcast soccer analysis has shown that the problem involves several tightly coupled sub-tasks, including player detection, tracking, team assignment and field registration, all of which are affected by factors such as camera motion, occlusion, scale variation and motion blur \cite{Liu2009,Theiner2022}. Earlier work has also shown that tracking football players directly from TV broadcasts is feasible, but only by addressing a difficult combination of camera estimation, player localisation and identity disambiguation under realistic match conditions \cite{Beetz2007}.
+
+This project is motivated by the question of how far a modern, modular computer vision pipeline can go in turning raw broadcast football video into useful tactical and spatial information. Rather than focusing on a single isolated task, the project investigates an end-to-end pipeline that combines detection, multi-object tracking, unsupervised team assignment, pitch registration, homography-based projection and event reasoning. The intended outcome is a system that can transform broadcast footage into structured analytical outputs such as annotated tracking video, bird's-eye tactical views, heatmaps, match statistics and offside analysis. The overall aim is not to replace professional-grade tracking systems, but to investigate how far a modular vision pipeline can go in extracting practically useful information from widely available video data.
 
 \section{Aims and Objectives}
+\label{sec:aims}
+
+The overall aim of this project is to design and implement an automated computer vision pipeline that analyses broadcast football video and produces structured tactical and spatial information without requiring specialised capture systems or manual team labels.
+
+To achieve this aim, the project pursues the following objectives:
+
+\begin{itemize}
+    \item develop and train an object detection model capable of identifying the main on-pitch entities, namely players, goalkeepers, referees, and the ball;
+    
+    \item implement a multi-object tracking stage that maintains consistent identities for detected entities across video frames;
+    
+    \item design an unsupervised team assignment method that groups players by team using visual appearance cues rather than manual class labels;
+    
+    \item detect pitch keypoints and estimate a homography that maps image-space positions into a two-dimensional pitch representation;
+    
+    \item build a dedicated ball detection component with temporal smoothing to improve robustness against the ball's small size, rapid motion, and frequent occlusion;
+    
+    \item generate higher-level tactical outputs, including bird's-eye visualisations of player positions and per-player heatmaps of spatial activity;
+    
+    \item implement offside analysis by combining ball possession changes, projected player positions, and the offside rule in pitch-space coordinates;
+    
+    \item compute derived match statistics, including player speed, distance covered, pass counts, and team possession; and
+    
+    \item integrate these components into a modular, configurable end-to-end pipeline that processes broadcast footage and produces multiple analytical outputs.
+\end{itemize}
+
+Together, these objectives define a project that spans several areas of computer vision and machine learning, and whose success depends not only on individual component quality but also on the reliability of their integration into a single coherent system.
+
+\section{Evaluation Strategy}
+\label{sec:eval-strategy}
+
+The project will be evaluated at both \emph{component level} and \emph{system level}, since this is an end-to-end broadcast football analysis pipeline whose final performance depends not only on the accuracy of individual modules, but also on how reliably they interact \cite{Theiner2022}. In general, good performance means that individual components achieve strong task-appropriate metrics, while the integrated pipeline produces coherent, tactically meaningful outputs from broadcast footage.
+
+\subsection{Component-Level Evaluation}
+
+\paragraph{Object detection.}
+The main object detector will be evaluated using standard detection metrics, with mean Average Precision (mAP) at Intersection over Union (IoU) thresholds from 0.50 to 0.95 (\emph{mAP50--95}) as the primary measure and \emph{mAP50}, precision, and recall as supporting metrics. Per-class results for players, goalkeepers, referees, and the ball will be reported because these classes differ significantly in difficulty. A confusion matrix will also be included to highlight the main sources of classification error.
+
+\paragraph{Dedicated ball detection.}
+Because the ball is the smallest and most challenging object in broadcast footage, the dedicated ball detector will be evaluated separately. Held-out validation results obtained during training will be reported using the same detection metrics. In addition, performance will be assessed on a manually labelled short clip to measure detection rate and false positive rate under realistic broadcast conditions. This will distinguish offline model performance from practical in-video performance.
+
+\paragraph{Pitch keypoint detection and homography.}
+Pitch keypoint detection will be evaluated using pose-specific metrics, again with \emph{mAP50--95} as the main measure. To assess the practical quality of the estimated homography, a small reprojection-error experiment will be conducted on selected frames. Manually identified pitch landmarks will be transformed into pitch coordinates and compared with their expected locations, providing a geometric measure of field registration accuracy, which is a standard concern in sports-field calibration and registration tasks \cite{TVCalib2023}.
+
+\paragraph{Multi-object tracking.}
+Tracking performance will be evaluated on a manually annotated short segment using standard multi-object tracking metrics such as Higher Order Tracking Accuracy (\emph{HOTA}), Multi-Object Tracking Accuracy (\emph{MOTA}), and Identification F1 (\emph{IDF1}). These are appropriate because they capture both detection quality and temporal identity consistency \cite{HOTA2020,MOTChallenge2021}. The number of identity switches will also be reported to provide an interpretable measure of tracking stability. Since dense annotation of full matches is outside the scope of this project, formal tracking evaluation will be limited to a short labelled subset.
+
+\paragraph{Team assignment.}
+The unsupervised team assignment stage will be evaluated on a manually labelled sample of frames using precision, recall, and \emph{F1 score}, which are more informative than accuracy alone for this binary task. A small ablation study will compare results before and after temporal smoothing to test whether majority-vote smoothing improves label stability. Goalkeeper-to-team resolution, which assigns each detected goalkeeper to the nearest team cluster, will be assessed as part of this evaluation by checking whether goalkeepers are consistently assigned to the correct team.
+
+\paragraph{Offside analysis.}
+Offside detection will be evaluated at event level using a manually labelled set of pass events containing both offside and non-offside situations. Predictions will be compared against these labels using event-level precision, recall, and \emph{F1 score}. In addition, all detected offside events in the final outputs will be manually checked frame by frame to identify both successful detections and common failure cases.
+
+\paragraph{Team possession.}
+Team possession will be evaluated on a short manually labelled segment by comparing predicted possession percentages with hand-annotated ground truth using Mean Absolute Error (\emph{MAE}). This provides a direct measure of how closely the estimated possession values match the manually observed distribution of possession over time.
+
+\paragraph{Derived statistics and higher-level outputs.}
+Derived player and team statistics, such as speed, distance covered, and pass counts, will be assessed mainly through plausibility checks. Good performance here means that values are internally consistent, temporally stable, and broadly compatible with expected football ranges reported in the literature, while still being treated as estimates rather than ground truth \cite{Altmann2021,Gualtieri2023}.
+
+Bird's-eye visualisations and heatmaps will be evaluated qualitatively by examining whether projected player positions and spatial activity patterns are tactically plausible. For example, projected positions should remain within valid pitch boundaries, and heatmaps should broadly reflect expected positional behaviour over a clip. These outputs will also help illustrate how upstream errors affect later stages of analysis.
+
+\subsection{System-Level Evaluation}
+
+At system level, the project will be assessed through the coherence and usefulness of its integrated outputs, including annotated tracking video, bird's-eye views, heatmaps, offside visualisations, and derived statistics. A short end-to-end case study on one representative sequence will be included to demonstrate how the pipeline performs as a complete analysis system rather than as a set of isolated components.
+
+The evaluation will also include explicit analysis of failure cases and error propagation. In particular, the report will examine how errors in detection, tracking, or homography estimation influence downstream modules such as offside analysis, heatmap generation, and statistical summaries. This is important because the value of a modular vision system depends not only on its strengths, but also on understanding where and why failures occur.
+
+Overall, the evaluation strategy combines quantitative model-level evidence, manually constructed labelled subsets for components without existing ground truth, and qualitative assessment of integrated outputs. This provides a realistic and academically defensible basis for judging whether the project has met its objectives, while making its limitations explicit.
 
 \section{Report Structure}
+\label{sec:report-structure}
+
+This report is structured so that the reader is guided through the motivation, development, and evaluation of the proposed system, while also providing a clear overview of the project as a whole.
+
+\begin{itemize}
+    \item \textbf{Chapter 1 -- Introduction.} This chapter introduces the project and its context, outlines the motivation behind the work, states the aims and objectives, and presents the evaluation strategy used to assess the system.
+    
+    \item \textbf{Chapter 2 -- Background and Theory.} This chapter reviews the relevant literature and technical background needed to understand the project, including the key computer vision and machine learning concepts that inform the chosen methodology.
+    
+    \item \textbf{Chapter 3 -- Methodology and Implementation.} This chapter describes how the system was designed and implemented. It explains the overall pipeline, the main components used, and the design decisions taken during development.
+    
+    \item \textbf{Chapter 4 -- Results.} This chapter presents the main outputs produced by the system, including the generated visualisations, event detections, and statistical outputs. It focuses on what the implemented pipeline produces in practice.
+    
+    \item \textbf{Chapter 5 -- Evaluation.} This chapter evaluates the performance of the individual components and the system as a whole using both quantitative metrics and qualitative analysis. It also discusses failure cases, limitations, and the effect of error propagation across the pipeline.
+    
+    \item \textbf{Chapter 6 -- Conclusion.} This chapter summarises the main achievements of the project, reflects on its limitations, and outlines possible directions for future work.
+\end{itemize}
