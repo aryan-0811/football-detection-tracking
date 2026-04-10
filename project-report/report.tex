@@ -1,12 +1,16 @@
-\documentclass[12pt,BSc,wordcount,twoside]{muthesis}
+\documentclass[12pt,BSc,wordcount,oneside]{muthesis}
 % The regulations say that 12pt should be used
 % Change the BSc option to MSc, MPhil, MRes or PhD if appropriate
 % Add 'anon' to the above options to replace your name with your student ID
 
 \usepackage{verbatim}
+\usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{graphicx}
 \usepackage{url} % typeset URL's reasonably
 \usepackage{listings}
+\usepackage{siunitx}
+\usepackage{natbib}
 
 \usepackage{pslatex} % Use Postscript fonts
 \usepackage{hyperref} % Load last to avoid conflicts
@@ -35,7 +39,7 @@
 
 \beforeabstract
 
-\prefacesection{List of Abbreviations}
+\chapter*{List of Abbreviations}
 \input{frontmatter/abbreviations}
 
 \prefacesection{Abstract}

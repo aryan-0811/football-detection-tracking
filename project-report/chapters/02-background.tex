@@ -1,6 +1,1047 @@
 \chapter{Background and Theory}
 \label{ch:background}
 
-\section{Overview}
+\section{Broadcast Football Video Analysis}
+\label{sec:background_broadcast_football}
 
-\section{Related Work}
+Automated analysis of football from broadcast video has attracted sustained 
+research interest because television footage is universally available and 
+captures the full spatial and tactical context of a match through a single 
+monocular camera, without requiring dedicated tracking infrastructure or 
+stadium-side sensor installations \cite{Theiner2022, Liu2009}. In contrast 
+to specialised commercial tracking systems -- which supply player-position 
+data from multi-camera or radar installations -- a broadcast pipeline must 
+recover all player, ball, and pitch information from a single compressed, 
+moving-camera video stream \cite{Goes2021}.
+
+This setting introduces several coupled technical challenges. First, the 
+broadcast camera is non-stationary: it undergoes continuous pan, tilt, and 
+zoom in response to play, so the background cannot be treated as a fixed 
+spatial reference and inter-frame motion cannot be attributed to scene objects 
+alone \cite{Theiner2022}. Second, the ball is extremely small relative to the 
+frame and is frequently blurred, occluded, or temporarily absent, making 
+reliable detection substantially harder than for players \cite{Gualtieri2023}. 
+Third, players on the same team share near-identical visual appearance due to 
+uniform colour and similar build, so tracking and team identification must rely 
+on subtle spatial and visual cues \cite{Theiner2022}. Fourth, image-space 
+measurements are subject to perspective distortion, so quantities such as 
+distance, speed, and tactical positioning are meaningful only after 
+registration to a canonical pitch model \cite{TVCalib2023}.
+
+A widely adopted response to this complexity is to decompose the problem into 
+a sequence of specialised components \cite{Theiner2022, Liu2009, Goes2021}. 
+Object detection and ball detection provide the primary observations, 
+multi-object tracking maintains temporal identity, team assignment infers 
+player affiliation, and pitch registration maps image coordinates into a 
+canonical field representation. Higher-level outputs such as heatmaps, 
+possession estimates, and offside reasoning are then expressed in pitch space 
+rather than image coordinates. The pipeline developed in this project follows 
+this structure, as illustrated in Figure~\ref{fig:pipeline_overview}, and the 
+theoretical basis for each component is developed in the sections that follow.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=\linewidth]{images/pipeline_overview.png}
+  \caption{Overview of the end-to-end broadcast football video analysis 
+             pipeline developed in this project. Teal stages operate in image 
+             space; coral stages handle geometric registration; blue stages 
+             operate entirely in pitch space. Section references indicate where 
+             the theoretical basis for each component is established.}
+  \label{fig:pipeline_overview}
+\end{figure}
+
+\section{Object Detection with YOLO}
+\label{sec:background_object_detection}
+
+Object detection is the task of simultaneously localising and classifying 
+objects within an image. In broadcast football analysis, the relevant entities 
+are players, goalkeepers, referees, and the ball; for each, a detector must 
+produce a bounding box and a class label. This stage is foundational: missed 
+detections, inaccurate localisation, and class errors propagate directly into 
+tracking, team assignment, homography estimation, and all downstream 
+event reasoning.
+
+Formally, a detector maps an input image $I$ to a set of predictions
+\begin{equation}
+    D = \{(b_i,\, c_i,\, s_i)\}_{i=1}^{N},
+    \label{eq:detection_output}
+\end{equation}
+where $b_i$ denotes a bounding box (centre coordinates, width, and height), 
+$c_i$ a class label, and $s_i \in [0,1]$ a confidence score reflecting the 
+detector's certainty that an object of class $c_i$ is present at $b_i$.
+
+\subsection{Bounding-Box Localisation and IoU}
+\label{subsec:background_iou}
+
+Localisation quality is measured by the Intersection over Union (IoU) between 
+a predicted box $B_p$ and a ground-truth box $B_g$:
+\begin{equation}
+    \mathrm{IoU}(B_p, B_g) = \frac{|B_p \cap B_g|}{|B_p \cup B_g|},
+    \label{eq:iou}
+\end{equation}
+which takes values in $[0,1]$, with larger values indicating greater spatial 
+overlap (Figure~\ref{fig:iou_diagram}). A detection is conventionally counted 
+as a true positive only if its IoU with the nearest unmatched ground-truth box 
+exceeds a threshold and the predicted class is correct \cite{lin2014microsoft}.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.72\linewidth]{images/iou.png}
+    \caption{Intersection over Union (IoU) between a ground-truth bounding 
+box $B_g$ (blue, dashed) and a predicted bounding box $B_p$ (orange). 
+IoU is the ratio of the intersection area (gold) to the 
+total union area of both boxes, computed as $\text{IoU} = |B_g \cap B_p| / |B_g \cup B_p|$.}
+    \label{fig:iou_diagram}
+\end{figure}
+
+Because a detector typically produces multiple overlapping candidates for the 
+same object, Non-Maximum Suppression (NMS) is applied as a post-processing 
+step. NMS retains the highest-confidence box among strongly overlapping 
+predictions and suppresses the remainder \cite{Redmon2016}.
+
+\subsection{Precision, Recall, and Mean Average Precision}
+\label{subsec:background_map}
+
+Detection performance is characterised by the precision--recall trade-off. 
+Precision measures the fraction of predicted boxes that are correct; recall 
+measures the fraction of ground-truth objects that are found:
+\begin{equation}
+    \mathrm{Precision} = \frac{\mathrm{TP}}{\mathrm{TP} + \mathrm{FP}},
+    \qquad
+    \mathrm{Recall} = \frac{\mathrm{TP}}{\mathrm{TP} + \mathrm{FN}},
+    \label{eq:precision_recall}
+\end{equation}
+where $\mathrm{TP}$, $\mathrm{FP}$, and $\mathrm{FN}$ denote true positives, 
+false positives, and false negatives respectively. By varying the confidence 
+threshold, a precision--recall curve is obtained; the Average Precision (AP) 
+for a class is the area under this curve, and Mean Average Precision (mAP) is 
+the mean AP across all classes \cite{lin2014microsoft}.
+
+Two standard operating points are reported in modern benchmarks: 
+$\mathrm{mAP}_{50}$, evaluated at an IoU threshold of 0.50, and 
+$\mathrm{mAP}_{50\text{--}95}$, averaged over thresholds from 0.50 to 0.95 
+in steps of 0.05. The latter is a stricter criterion because it rewards 
+accurate localisation as well as correct classification. Both metrics are 
+relevant here because the four object classes --- players, goalkeepers, 
+referees, and ball --- differ substantially in size and detection difficulty, 
+so per-class AP values alongside overall mAP give the most informative picture 
+of detector quality.
+
+\subsection{The YOLO Architecture}
+\label{subsec:background_yolo}
+
+The YOLO (\emph{You Only Look Once}) family formulates detection as a 
+single-stage regression problem: bounding-box coordinates and class 
+confidences are predicted in one forward pass through the network, without a 
+separate region-proposal stage \cite{Redmon2016}. This makes YOLO well suited 
+to video-based applications where detections must be produced for every frame 
+at high throughput.
+
+Modern YOLO variants, including the YOLOv8 models used in this project, 
+employ an anchor-free detection head \cite{Jocher2023}. Rather than predicting 
+offsets relative to a set of pre-defined anchor boxes, an anchor-free head 
+directly regresses the box centre, width, and height from each spatial 
+location in the feature map. This simplifies training, removes the need to 
+tune anchor priors for a specific dataset, and improves localisation on small 
+or unusually shaped objects --- both relevant to football, where the ball is 
+small and player aspect ratios vary with pose.
+
+Feature extraction is performed at multiple spatial scales through a Feature 
+Pyramid Network (FPN) neck \cite{lin2017feature}, which combines 
+high-resolution, semantically weak features from early layers with 
+low-resolution, semantically strong features from later layers. This 
+multi-scale representation handles the large variation in object size within 
+the same frame, where a close-up referee and a distant background player may 
+coexist.
+
+The confidence score $s_i$ reflects both objectness and class probability. 
+Predictions below a threshold $\tau$ are discarded before NMS is applied, 
+introducing a precision--recall trade-off: a high $\tau$ reduces false 
+positives at the cost of missed detections, while a low $\tau$ recovers more 
+objects at the cost of increased noise. This trade-off is especially 
+consequential for ball detection, where the object is small, frequently 
+occluded, and must be recovered even under low visual confidence; the 
+implications for threshold selection are discussed in 
+Section~\ref{sec:background_ball_detection}.
+
+Figure~\ref{fig:detection_example} shows a representative detection output 
+from the pipeline, illustrating the variation in object scale across the four 
+target classes.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\linewidth]{images/detection_example.png}
+    \caption{Example output of the YOLOv8m object detector on a broadcast 
+             football frame. Bounding boxes are shown for all four classes: 
+             players (blue), goalkeepers (green), referees (yellow), and 
+             ball (red). Confidence scores are shown above each box.}
+    \label{fig:detection_example}
+\end{figure}
+
+Together, the IoU criterion, NMS, precision--recall evaluation, and the 
+anchor-free YOLO formulation provide the detection-theoretic foundation for 
+Chapter~\ref{ch:methodology} and the evaluation metrics reported in 
+Chapter~\ref{ch:evaluation}.
+
+\section{Small-Object Detection and Dedicated Ball Detection}
+\label{sec:background_ball_detection}
+
+Although the ball is the primary object of interest in football, it is also 
+the hardest to detect reliably in broadcast footage. At typical broadcast 
+resolution, the ball subtends only a few dozen pixels in diameter, moves 
+rapidly enough to produce motion blur, and is frequently occluded by players 
+or absent from the frame entirely \cite{Gualtieri2023}. These properties place 
+it firmly in the small-object detection regime, where standard detectors 
+trained jointly on all classes tend to underperform because larger, more 
+visually prominent objects dominate the training signal \cite{Theiner2022}.
+
+The impact of small object size on detection difficulty is quantifiable 
+through the IoU criterion introduced in Section~\ref{subsec:background_iou}. 
+For a ground-truth box $B_g$ and predicted box $B_p$, the same absolute pixel 
+displacement causes a disproportionately large drop in $\mathrm{IoU}(B_p, 
+B_g)$ when the object is small, because the intersection area shrinks faster 
+than the union area grows. This makes ball detection acutely sensitive to 
+localisation error, blur, and detector uncertainty in a way that does not 
+apply to larger objects such as players.
+
+A practical response to these challenges is to train a dedicated ball detector 
+with model capacity and inference thresholds tuned specifically for the 
+small-object regime. In particular, operating at a low confidence threshold 
+$\tau$ maximises recall at the cost of increased false positives 
+\cite{Gualtieri2023}. The resulting candidate set at frame $t$,
+\begin{equation}
+    C_t = \left\{\bigl(\mathbf{b}_t^{(j)},\, s_t^{(j)}\bigr)\right\}_{j=1}^{N_t},
+    \label{eq:ball_candidates}
+\end{equation}
+where $\mathbf{b}_t^{(j)}$ is a candidate location and $s_t^{(j)}$ its 
+confidence score, will contain the true ball with high probability but also 
+spurious detections from background clutter.
+
+Temporal coherence provides a natural filter for these false positives. 
+Because the ball trajectory is continuous between frames --- even during rapid 
+motion, the ball cannot teleport arbitrarily between consecutive observations 
+--- a proximity rule can select the most plausible candidate given a previous 
+ball position $\mathbf{b}_{t-1}$:
+\begin{equation}
+    \hat{\mathbf{b}}_t = \arg\min_{\mathbf{b}_t^{(j)} \in C_t} 
+    \left\|\mathbf{b}_t^{(j)} - \mathbf{b}_{t-1}\right\|_2,
+    \label{eq:ball_temporal_selection}
+\end{equation}
+subject to a minimum confidence threshold and a maximum permitted 
+inter-frame displacement. The displacement bound acts as a hard plausibility 
+gate: candidates that imply physically implausible ball speeds are discarded 
+regardless of their confidence score. Figure~\ref{fig:ball_temporal_filtering} 
+illustrates this filtering process on a representative broadcast frame.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\linewidth]{images/ball_temporal_filtering.png}
+    \caption{Dedicated ball detector temporal filtering on a representative 
+             broadcast frame. Top left: two low-threshold candidates 
+             ($s \geq 0.05$) detected in frame $t$, with confidence scores 
+             shown in red. Top right: prior ball position 
+             $\hat{\mathbf{b}}_{t-1}$ (green cross) and maximum permitted 
+             displacement gate of 80 pixels (dashed circle); the 
+             lower-confidence candidate at $s = 0.08$ lies outside the gate 
+             and is discarded. Bottom: the selected ball position 
+             $\hat{\mathbf{b}}_t$ at $s = 0.57$, retained as the closest 
+             in-gate candidate, as formalised in 
+             Equation~\eqref{eq:ball_temporal_selection}.}
+    \label{fig:ball_temporal_filtering}
+\end{figure}
+
+This approach differs deliberately from motion-model trackers such as the 
+Kalman filter discussed in 
+Section~\ref{subsec:background_tracking_by_detection}. A constant-velocity 
+Kalman filter imposes a parametric dynamical model that is poorly suited to 
+ball motion in football, where abrupt accelerations from kicks, rebounds, and 
+deflections are routine. The proximity rule instead exploits only the weakest 
+continuity assumption --- that the ball's position changes smoothly between 
+frames --- without committing to any particular dynamical model, making it 
+more robust to the sharp trajectory changes that characterise football.
+
+Section~\ref{ch:methodology} describes how these principles are instantiated 
+in the dedicated ball-detection component, and 
+Chapter~\ref{ch:evaluation} reports its performance separately from the 
+general object detector.
+
+\section{Multi-Object Tracking by Detection}
+\label{sec:background_tracking}
+
+Object detection alone produces independent bounding boxes in each frame, but 
+downstream tasks such as team assignment, heatmap accumulation, speed 
+estimation, and offside reasoning all require object identities to remain 
+consistent over time. Multi-object tracking (MOT) addresses this by 
+associating frame-level detections into persistent trajectories 
+\cite{MOTChallenge2021}. The dominant paradigm in modern MOT is 
+\emph{tracking-by-detection}, in which a detector first produces candidate 
+boxes and a separate association stage links them across frames.
+
+Formally, let
+\begin{equation}
+    D_t = \{d_t^1, d_t^2, \dots, d_t^{n_t}\}
+    \label{eq:detections_t}
+\end{equation}
+denote the set of detections at frame $t$, and let
+\begin{equation}
+    \mathcal{T}_{t-1} = \{\tau_{t-1}^1, \tau_{t-1}^2, \dots, 
+    \tau_{t-1}^{m_{t-1}}\}
+    \label{eq:tracks_t}
+\end{equation}
+denote the set of active tracks from the previous frame. The tracking problem 
+is to assign detections in $D_t$ to tracks in $\mathcal{T}_{t-1}$, while 
+creating new tracks for unmatched detections and terminating or buffering 
+tracks that receive no assignment.
+
+\subsection{Tracking-by-Detection}
+\label{subsec:background_tracking_by_detection}
+
+Tracking-by-detection methods combine motion prediction with data association. 
+Motion prediction estimates where each existing track is likely to appear in 
+the current frame, while data association matches those predictions to the 
+observed detections.
+
+The standard motion model is the linear Kalman filter \cite{kalman1960new}, 
+which maintains a state vector $\mathbf{x}_t$ comprising the bounding-box 
+geometry and its first-order derivatives. The filter operates in two steps. 
+The prediction step propagates the state forward using a constant-velocity 
+model:
+\begin{align}
+    \hat{\mathbf{x}}_t^- &= F\mathbf{x}_{t-1}, 
+    \label{eq:kalman_predict} \\
+    P_t^- &= FP_{t-1}F^\top + Q,
+    \label{eq:kalman_cov_predict}
+\end{align}
+where $F$ is the state-transition matrix, $P_t^-$ is the predicted error 
+covariance, and $Q$ is the process noise covariance. The update step corrects 
+the prediction using the matched detection $\mathbf{z}_t$:
+\begin{align}
+    K_t &= P_t^- H^\top\bigl(HP_t^- H^\top + R\bigr)^{-1},
+    \label{eq:kalman_gain} \\
+    \mathbf{x}_t &= \hat{\mathbf{x}}_t^- + 
+    K_t\bigl(\mathbf{z}_t - H\hat{\mathbf{x}}_t^-\bigr),
+    \label{eq:kalman_update}
+\end{align}
+where $H$ is the observation matrix, $R$ is the measurement noise covariance, 
+and $K_t$ is the Kalman gain, which balances confidence in the model 
+prediction against confidence in the measurement.
+
+Data association is formulated as a bipartite assignment problem. A cost 
+matrix $C \in \mathbb{R}^{m \times n}$ is constructed where $C_{ij}$ measures 
+the incompatibility between track $i$ and detection $j$, typically as 
+$1 - \mathrm{IoU}$ using the criterion defined in Equation~\eqref{eq:iou}. 
+The Hungarian algorithm \cite{kuhn1955hungarian} then finds the minimum-cost 
+one-to-one assignment in $\mathcal{O}(n^3)$ time, producing matched pairs, 
+unmatched detections that spawn new tracks, and unmatched tracks that are 
+buffered or deleted.
+
+This paradigm scales efficiently to the many simultaneous players in 
+football, but remains sensitive to missed detections, severe occlusion, and 
+the visual similarity between players on the same team.
+
+\subsection{ByteTrack}
+\label{subsec:background_bytetrack}
+
+ByteTrack improves upon the standard tracking-by-detection pipeline by 
+retaining low-confidence detections rather than discarding them 
+\cite{ByteTrack}. The motivation is that a detector's confidence score can 
+drop substantially during partial occlusion or motion blur without the 
+underlying object disappearing; discarding such detections prematurely causes 
+unnecessary track fragmentation.
+
+ByteTrack partitions the detector output at frame $t$ into a high-score set
+\begin{equation}
+    D_t^{\mathrm{high}} = \{d \in D_t : s_d \geq \tau_{\mathrm{high}}\}
+    \label{eq:bytetrack_high}
+\end{equation}
+and a low-score set $D_t^{\mathrm{low}} = D_t \setminus D_t^{\mathrm{high}}$, 
+where $\tau_{\mathrm{high}}$ is a confidence threshold. As illustrated in 
+Figure~\ref{fig:bytetrack_association}, association then proceeds in two 
+stages: active tracks are first matched against $D_t^{\mathrm{high}}$ using 
+IoU-based cost; tracks that remain unmatched are then compared against 
+$D_t^{\mathrm{low}}$. The intuition is that high-confidence detections 
+establish reliable matches, while low-confidence detections can still recover 
+continuity for temporarily weakened tracks. Tracks that receive no assignment 
+in either stage are buffered for a fixed number of frames before being deleted.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.9\linewidth]{images/bytetrack_two_stage_association.png}
+    \caption{ByteTrack two-stage association process. Detector output is 
+             partitioned by confidence threshold $\tau_{\mathrm{high}}$ into 
+             a high-score set $D_t^{\mathrm{high}}$ and a low-score set 
+             $D_t^{\mathrm{low}}$. Stage~1 matches active tracks against 
+             $D_t^{\mathrm{high}}$ using the Hungarian algorithm with IoU 
+             cost; unmatched tracks proceed to Stage~2, where they are 
+             compared against $D_t^{\mathrm{low}}$. Tracks that remain 
+             unmatched after both stages are held in a buffer and deleted 
+             if unrecovered within a fixed number of frames.}
+    \label{fig:bytetrack_association}
+\end{figure}
+
+In broadcast football footage, where players routinely occlude one another 
+and detector confidence fluctuates during rapid motion, this two-stage 
+strategy reduces identity switches relative to single-stage association. 
+ByteTrack is therefore used as the default tracker in this project.
+
+\subsection{BoT-SORT}
+\label{subsec:background_botsort}
+
+BoT-SORT extends the tracking-by-detection framework with two additional 
+mechanisms: camera-motion compensation and appearance-based re-identification 
+\cite{BoTSORT}. Camera-motion compensation corrects the Kalman filter's 
+predicted positions for global motion introduced by the broadcast camera, 
+improving association accuracy when the camera pans or zooms rapidly. 
+Appearance-based matching incorporates visual feature similarity as a 
+secondary cost alongside IoU, allowing tracks to be distinguished even when 
+their predicted boxes overlap spatially.
+
+The appearance features used in BoT-SORT are derived from a dedicated 
+re-identification model, in contrast to the general-purpose visual embeddings 
+used for team assignment in Section~\ref{sec:background_team_id}. Together, 
+these mechanisms make BoT-SORT more robust than ByteTrack in scenarios with 
+severe camera motion or strong visual ambiguity, at the cost of additional 
+computation. In this project, BoT-SORT is available as a switchable 
+alternative to ByteTrack, with the choice evaluated in 
+Chapter~\ref{ch:evaluation}.
+
+\subsection{Tracking Evaluation: HOTA}
+\label{subsec:background_tracking_metrics}
+
+Tracking quality is assessed using metrics that separately capture 
+localisation accuracy and identity consistency. Multi-Object Tracking 
+Accuracy (MOTA) and Identification F1 (IDF1) are established baselines 
+\cite{MOTChallenge2021}, but both conflate detection and association 
+performance in ways that can obscure the source of errors.
+
+Higher Order Tracking Accuracy (HOTA) was introduced to address this by 
+decomposing overall performance into a detection score and an association 
+score \cite{HOTA2020}:
+\begin{equation}
+    \mathrm{HOTA}_\alpha = \sqrt{\mathrm{DetA}_\alpha \cdot 
+    \mathrm{AssA}_\alpha},
+    \label{eq:hota}
+\end{equation}
+where $\mathrm{DetA}_\alpha$ measures how well predicted boxes overlap 
+ground-truth boxes at localisation threshold $\alpha$, and 
+$\mathrm{AssA}_\alpha$ measures how consistently predicted identities match 
+ground-truth identities across time. The geometric mean ensures that neither 
+component can dominate: a tracker that localises well but fragments 
+identities, or associates well but misses many objects, will score poorly 
+overall. The final HOTA score is averaged over $\alpha \in [0.05, 0.95]$, 
+making it the primary tracking metric used in this project.
+
+\section{Unsupervised Team Identification from Visual Features}
+\label{sec:background_team_id}
+
+In broadcast football footage, team identity is not available as an explicit 
+detector output. Players from the two outfield teams must therefore be grouped 
+using visual cues, without labelled examples for the specific match being 
+analysed. This makes team identification a clustering problem rather than a 
+supervised classification task. A useful representation must distinguish 
+jerseys reliably while remaining robust to pose variation, background clutter, 
+scale changes, and illumination differences.
+
+\subsection{Deep Visual Embeddings}
+\label{subsec:background_visual_embeddings}
+
+A common approach is to map each player crop to a feature vector in a 
+high-dimensional embedding space. Formally, let $I_i$ denote the image crop 
+of player $i$. A pretrained visual encoder defines a mapping
+\begin{equation}
+    f : I_i \mapsto \mathbf{z}_i \in \mathbb{R}^d,
+    \label{eq:embedding_map}
+\end{equation}
+where $\mathbf{z}_i$ captures semantically useful visual information. The aim 
+is that players from the same team produce embeddings that lie closer together 
+than those from opposing teams.
+
+Vision--language models are particularly well suited to this task. SigLIP 
+\cite{SigLIP2023} is trained using a sigmoid-based contrastive loss to align 
+image and text representations over very large datasets, encouraging the 
+encoder to organise its feature space along visually and semantically 
+meaningful axes such as colour, texture, and pattern. Crucially, this 
+alignment is achieved without match-specific supervision: the model has never 
+been explicitly trained on football kits, yet its feature space is sensitive 
+to kit appearance because jersey colour and texture are visually salient 
+properties that correspond to natural language descriptions. This makes SigLIP 
+embeddings more robust than hand-crafted colour features, which cannot capture 
+texture, pattern, shading, or sponsor-logo variation common in professional 
+kits.
+
+The usefulness of an embedding depends strongly on the input region. The 
+jersey torso contains the most discriminative signal for team identification, 
+whereas the lower body, hands, and background contribute noise. Formally, if 
+the full detection box for player $i$ has height $h_i$, a torso crop 
+$I_i^{\mathrm{torso}}$ is defined by retaining only the upper portion of the 
+box. Applying the encoder to $I_i^{\mathrm{torso}}$ rather than the full box 
+therefore produces a cleaner embedding for clustering.
+
+\subsection{Dimensionality Reduction and Clustering}
+\label{subsec:background_dimred_clustering}
+
+Although informative, embeddings are typically high-dimensional. Clustering 
+directly in a very high-dimensional space can be unstable because Euclidean 
+distances become less discriminative as dimension increases --- a phenomenon 
+known as the curse of dimensionality~\cite{aggarwal2001surprising}. A 
+standard response is to apply dimensionality reduction before clustering, 
+producing a compact representation that preserves useful neighbourhood 
+structure.
+
+Let $\mathbf{z}_i \in \mathbb{R}^d$ be the embedding of player $i$ and let
+\begin{equation}
+    \phi : \mathbb{R}^d \rightarrow \mathbb{R}^{d'}, \quad d' \ll d,
+    \label{eq:dimred_map}
+\end{equation}
+be a dimensionality-reduction mapping, yielding the reduced representation 
+$\mathbf{y}_i = \phi(\mathbf{z}_i)$.
+
+Uniform Manifold Approximation and Projection (UMAP) \cite{McInnes2018} is 
+used for this step. UMAP constructs a low-dimensional layout by preserving 
+the local neighbourhood structure of the original space, which contrasts with 
+linear methods such as Principal Component Analysis (PCA) that preserve 
+directions of maximum global variance. Because team identity is reflected more 
+in local appearance similarity between same-kit players than in global 
+variance across all crops, a neighbourhood-preserving reduction is better 
+aligned with the downstream clustering task than a variance-maximising one.
+
+Given the reduced representations $\{\mathbf{y}_i\}_{i=1}^N$, $k$-means 
+clustering~\cite{MacQueen1967} partitions them into $k$ groups by minimising 
+the within-cluster sum of squares:
+\begin{equation}
+    \min_{\{\boldsymbol{\mu}_j\}_{j=1}^k} \sum_{i=1}^N 
+    \min_{1 \leq j \leq k} \|\mathbf{y}_i - \boldsymbol{\mu}_j\|_2^2,
+    \label{eq:kmeans_objective}
+\end{equation}
+where $\boldsymbol{\mu}_j$ is the centroid of cluster $j$. Setting $k=2$ 
+separates the two outfield teams without requiring ground-truth labels. 
+Clustering quality degrades when team kits are visually similar, when crops 
+contain strong background contamination, or when player appearance is 
+significantly affected by motion blur or occlusion --- limitations examined 
+in Chapter~\ref{ch:evaluation}.
+
+Figure~\ref{fig:team_clusters_umap} illustrates the resulting two-cluster 
+structure on a representative match clip, confirming that SigLIP embeddings 
+produce well-separated kit representations in the reduced space.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.65\linewidth]{images/team_clusters_umap.png}
+    \caption{UMAP projection of SigLIP torso-crop embeddings for all 
+             tracked outfield players in a representative match clip, 
+             coloured by $k$-means assignment ($k = 2$). The clear 
+             separation between clusters confirms that the embedding 
+             space reliably distinguishes the two teams' kit appearances, 
+             supporting the unsupervised identification approach described 
+             in Section~\ref{subsec:background_dimred_clustering}.}
+    \label{fig:team_clusters_umap}
+\end{figure}
+
+\subsection{Temporal Label Smoothing}
+\label{subsec:background_temporal_smoothing}
+
+Per-frame clustering predictions are often noisy: a player may be assigned 
+inconsistently across neighbouring frames because of blur, partial occlusion, 
+or crop quality variation. Since team identity is stable over the duration of 
+a track, it is natural to smooth the predicted labels temporally.
+
+Let $\ell_t^{(i)} \in \{1,2\}$ denote the raw predicted team label for 
+track $i$ at frame $t$. A majority-vote smoother over a sliding window of 
+length $W$ assigns the final label as
+\begin{equation}
+    \hat{\ell}_t^{(i)} = 
+    \mathrm{mode}\!\left(\ell_{t-W+1}^{(i)}, \ldots, \ell_t^{(i)}\right),
+    \label{eq:majority_vote_smoother}
+\end{equation}
+reducing short-term label jitter while preserving the assumption that a 
+player's team is constant within a track. The window length $W$ controls 
+a stability--responsiveness trade-off: larger $W$ suppresses more noise but 
+is slower to correct an erroneously initialised track.
+
+\subsection{Goalkeeper Team Resolution}
+\label{subsec:background_goalkeeper_resolution}
+
+Goalkeepers typically wear a kit that differs from both outfield teams, making 
+appearance-based clustering unreliable for this class. A practical alternative 
+exploits spatial context: a goalkeeper is almost always positioned closer to 
+their own team's players than to the opposing team's players.
+
+Let $\mathbf{p}_{\mathrm{GK}} \in \mathbb{R}^2$ be the image-space position 
+of a detected goalkeeper and let $\mathbf{c}_1, \mathbf{c}_2 \in \mathbb{R}^2$ 
+be the image-space centroids of the two outfield-player clusters. The 
+goalkeeper is assigned to team
+\begin{equation}
+    \hat{k} = \arg\min_{j \in \{1,2\}} 
+    \|\mathbf{p}_{\mathrm{GK}} - \mathbf{c}_j\|_2,
+    \label{eq:gk_nearest_centroid}
+\end{equation}
+substituting a spatial prior for the appearance cue that is unreliable in 
+this case. This assignment is independent of the goalkeeper's jersey colour 
+and requires no additional model.
+
+The team-identification procedure described in this section provides the 
+team labels required by all downstream pitch-space analytics and is 
+evaluated in Chapter~\ref{ch:evaluation}.
+
+\section{Pitch Keypoint Detection and Planar Homography}
+\label{sec:background_homography}
+
+Many outputs of this pipeline --- bird's-eye projection, heatmaps, speed 
+estimation, possession analysis, and offside reasoning --- require positions 
+to be expressed in a common pitch coordinate system rather than in image 
+pixels. In broadcast football analysis, this is achieved by detecting semantic 
+pitch landmarks and estimating a geometric mapping from the image plane to a 
+canonical pitch model \cite{Theiner2022, TVCalib2023}.
+
+\subsection{Pitch Landmark Detection}
+\label{subsec:background_pitch_landmarks}
+
+A football pitch contains a fixed set of semantic landmarks --- line 
+intersections, penalty-box corners, and circle tangent points --- whose 
+locations are precisely known in a standard top-down pitch representation. 
+Identifying these landmarks in a broadcast frame provides point 
+correspondences between image space and pitch space that can be used for 
+geometric registration.
+
+Formally, let $(\mathbf{x}_i, \mathbf{X}_i)$ denote the $i$-th 
+correspondence, where $\mathbf{x}_i = (u_i, v_i)^\top$ is the image-space 
+location of landmark $i$ and $\mathbf{X}_i = (x_i, y_i)^\top$ is its known 
+location on the canonical pitch. The role of keypoint detection is to 
+estimate the image-space locations $\{\mathbf{x}_i\}$ reliably enough that 
+they can support homography estimation.
+
+In this project, pitch keypoints are detected using a YOLOv8x-pose model, 
+which extends the object-detection architecture described in 
+Section~\ref{sec:background_object_detection} with a dedicated keypoint head. 
+Rather than predicting only bounding boxes and class labels, the pose head 
+additionally regresses the 2D coordinates and visibility confidence of a 
+fixed set of predefined keypoints for each detected instance \cite{Jocher2023}. 
+Applied to pitch registration, the model is trained to localise 32 canonical 
+pitch landmarks directly from the broadcast frame, producing image-space 
+coordinates together with per-keypoint confidence scores. For homography 
+estimation to be well-conditioned, the retained landmarks must be spatially 
+distributed across the frame rather than clustered in one region, since 
+concentrated correspondences poorly constrain all eight degrees of freedom of 
+the homography. Only landmarks whose confidence exceeds a threshold are 
+therefore retained, discarding poorly localised points that would otherwise 
+degrade the geometric mapping \cite{TVCalib2023}.
+
+\subsection{Homography Estimation}
+\label{subsec:background_homography_estimation}
+
+Because the football pitch can be approximated as a plane, the mapping 
+between image coordinates and pitch coordinates is modelled by a planar 
+homography. A homography is a projective transformation represented by a 
+$3 \times 3$ matrix $H$, defined up to a non-zero scalar factor since $H$ 
+and $\lambda H$ define the same transformation for any $\lambda \neq 0$. 
+Using homogeneous coordinates,
+\begin{equation}
+    \tilde{\mathbf{X}} \sim H\tilde{\mathbf{x}},
+    \label{eq:homography_mapping}
+\end{equation}
+where $\tilde{\mathbf{x}} = (u, v, 1)^\top$ and 
+$\tilde{\mathbf{X}} = (x, y, 1)^\top$ denote image and pitch points in 
+homogeneous form respectively.
+
+Since $H$ has eight degrees of freedom up to scale, at least four 
+non-collinear point correspondences are required to estimate it. With $N > 4$ 
+correspondences the system is overdetermined and is solved in a least-squares 
+sense using the Direct Linear Transform (DLT) \cite{hartley2003multiple}. 
+The DLT constructs a linear system $Ah = 0$ from the correspondences, where 
+$h \in \mathbb{R}^9$ is the vectorised form of $H$. The solution seeks $h$ 
+that minimises $\|Ah\|_2$ subject to $\|h\|_2 = 1$, which is obtained in 
+closed form by taking $h$ as the right singular vector of $A$ corresponding 
+to its smallest singular value.
+
+The validity of this mapping rests on three assumptions: the pitch surface is 
+sufficiently planar; the detected landmarks correspond to the correct semantic 
+points; and the mapping applies only to points on the ground plane, not to 
+objects above it such as players in mid-air. These are standard assumptions 
+in sports-field registration and are appropriate when the goal is spatial 
+reasoning on the playing surface \cite{TVCalib2023}.
+
+\subsection{Reprojection and Bird's-Eye Mapping}
+\label{subsec:background_reprojection_birdeye}
+
+Once $H$ has been estimated, any point assumed to lie on the pitch plane can 
+be mapped from image space to pitch space, yielding a bird's-eye 
+representation in which positions can be compared over time without 
+perspective distortion \cite{Theiner2022}. For player detections, the 
+ground-contact proxy used is the bottom-centre of the bounding box, which 
+best approximates the player's true location on the pitch plane.
+
+Registration quality is quantified by the reprojection error. For a 
+correspondence $(\mathbf{x}_i, \mathbf{X}_i)$, this is
+\begin{equation}
+    e_i = \left\|\mathbf{X}_i - \pi(H\tilde{\mathbf{x}}_i)\right\|_2,
+    \label{eq:reprojection_error}
+\end{equation}
+where $\pi(\cdot)$ converts homogeneous coordinates to Cartesian coordinates. 
+The mean reprojection error over all $N$ correspondences,
+\begin{equation}
+    \bar{e} = \frac{1}{N}\sum_{i=1}^{N} e_i,
+    \label{eq:mean_reprojection_error}
+\end{equation}
+measures how well the estimated transformation aligns the detected landmarks 
+with their canonical positions. Figure~\ref{fig:homography_registration} 
+illustrates this process on a representative broadcast frame, showing both 
+the detected landmarks used to estimate $H$ and the resulting bird's-eye 
+player projection.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\linewidth]{images/homography_registration.png}
+    \caption{Pitch registration on a representative broadcast frame. 
+             (a)~Detected pitch keypoints overlaid on the broadcast image, 
+             labelled with landmark index and confidence score; keypoints 
+             are coloured by pitch region --- pink for the left half, blue 
+             for the centre line, and red for the right half. 
+             (b)~Corresponding bird's-eye projection after homography 
+             estimation, showing all detected players and the ball mapped 
+             to the canonical pitch plane and coloured by entity type.}
+    \label{fig:homography_registration}
+\end{figure}
+
+Since homography error propagates to all downstream spatial analysis --- 
+shifting projected player positions, distorting heatmaps, and potentially 
+altering offside decisions --- accurate field registration is a geometric 
+prerequisite for the entire pipeline rather than an isolated preprocessing 
+step \cite{TVCalib2023}. Pitch keypoint detection and planar homography 
+together establish the geometric foundation for 
+Chapter~\ref{ch:methodology} and the registration evaluation in 
+Chapter~\ref{ch:evaluation}.
+
+\section{Spatial Analytics in Pitch Space}
+\label{sec:background_spatial_analytics}
+
+Once detections have been registered to a canonical pitch, spatial analysis 
+can be performed in a coordinate system that is independent of camera 
+perspective. Many tactical quantities --- player positioning, spatial 
+activity, speed, and distance covered --- are meaningful only when expressed 
+on the pitch plane rather than in image pixels \cite{Theiner2022, Goes2021}.
+
+\subsection{Player Projection onto the Pitch}
+\label{subsec:background_player_projection}
+
+To analyse player motion on the playing surface, each detection must be 
+represented by a single point on the pitch plane. The most appropriate 
+ground-plane proxy is the bottom-centre of the bounding box, since this best 
+approximates the location at which the player contacts the pitch. Projecting 
+the box centre instead would yield a point that does not correspond to a 
+physically meaningful ground-plane location.
+
+Let $B_t^{(i)}$ denote the bounding box of player $i$ at frame $t$, and let 
+$\mathbf{q}_t^{(i)} \in \mathbb{R}^2$ denote its bottom-centre anchor in 
+image coordinates. Given the image-to-pitch homography $H$, the projected 
+pitch-space position is
+\begin{equation}
+    \mathbf{p}_t^{(i)} = \pi\!\left(H\tilde{\mathbf{q}}_t^{(i)}\right),
+    \label{eq:player_projection}
+\end{equation}
+where $\tilde{\mathbf{q}}_t^{(i)}$ is the homogeneous form of the anchor 
+point and $\pi(\cdot)$ converts homogeneous coordinates to Cartesian 
+coordinates. This projection step is the basis of all later spatial 
+analytics: once each player is represented by a pitch-space trajectory 
+$\{\mathbf{p}_t^{(i)}\}_{t=1}^T$, positions can be compared across frames 
+in a common geometric reference and aggregate statistics derived over time.
+
+\subsection{Heatmap Construction}
+\label{subsec:background_heatmaps}
+
+A player heatmap summarises where that player has been located over a 
+sequence by estimating the spatial density of their projected positions on 
+the pitch. Let $\{\mathbf{p}_t^{(i)}\}_{t=1}^T$ be the projected positions 
+of player $i$. The pitch is divided into a discrete $M \times N$ grid and an 
+occupancy count is accumulated in each cell:
+\begin{equation}
+    H_i(u,v) = \sum_{t=1}^{T} 
+    \mathbf{1}\!\left[(u,v) = \mathrm{bin}\!\left(\mathbf{p}_t^{(i)}\right)
+    \right],
+    \label{eq:heatmap_histogram}
+\end{equation}
+where $\mathbf{1}[\cdot]$ is the indicator function and $\mathrm{bin}(\cdot)$ 
+assigns a pitch position to its grid cell.
+
+Because raw occupancy counts are sparse and visually noisy, the histogram is 
+smoothed by convolution with a Gaussian kernel $G_\sigma$:
+\begin{equation}
+    \tilde{H}_i = H_i * G_\sigma,
+    \label{eq:heatmap_smoothing}
+\end{equation}
+where $\sigma$ controls the spatial scale of smoothing. This is distinct from 
+kernel density estimation (KDE), which evaluates a continuous density function 
+at arbitrary query points; the grid-based accumulation followed by discrete 
+convolution is more accurately described as a Gaussian-smoothed spatial 
+histogram. The result is a continuous-looking density map that summarises 
+spatial tendencies over a clip, making it useful for inspecting player roles, 
+movement concentration, and broad positional behaviour. However, heatmap 
+quality depends directly on the reliability of the projected trajectories from 
+which they are built. Figure~\ref{fig:heatmap_construction} illustrates this 
+process for a single player, showing the raw trajectory points and the 
+resulting smoothed density map.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{images/heatmap_construction.png}
+    \caption{Heatmap construction for a single player over a representative 
+             clip. (a)~Raw projected pitch-space positions, showing the 
+             player's trajectory concentrated in the lower-left region of 
+             the pitch. (b)~Corresponding Gaussian-smoothed heatmap, 
+             produced by accumulating occupancy counts on a discrete grid 
+             and convolving with a Gaussian kernel as in 
+             Equations~\eqref{eq:heatmap_histogram} 
+             and~\eqref{eq:heatmap_smoothing}.}
+    \label{fig:heatmap_construction}
+\end{figure}
+
+\subsection{Speed and Distance Estimation}
+\label{subsec:background_speed_distance}
+
+Once player positions are available in pitch coordinates, movement statistics 
+are estimated from temporal differences. Let $f_s$ denote the video frame 
+rate in Hz, so that the inter-frame time interval is $\Delta t = 1/f_s$. A 
+finite-difference estimate of velocity for player $i$ at frame $t$ is
+\begin{equation}
+    \mathbf{v}_t^{(i)} = 
+    \frac{\mathbf{p}_t^{(i)} - \mathbf{p}_{t-1}^{(i)}}{\Delta t},
+    \label{eq:velocity_pitch_space}
+\end{equation}
+with instantaneous speed
+\begin{equation}
+    s_t^{(i)} = \left\|\mathbf{v}_t^{(i)}\right\|_2.
+    \label{eq:instantaneous_speed}
+\end{equation}
+Total distance covered is approximated by summing successive displacements:
+\begin{equation}
+    d^{(i)} = \sum_{t=2}^{T} 
+    \left\|\mathbf{p}_t^{(i)} - \mathbf{p}_{t-1}^{(i)}\right\|_2.
+    \label{eq:distance_pitch_space}
+\end{equation}
+
+These estimates are sensitive to noise: small localisation errors in 
+projected positions produce disproportionately large speed values after 
+finite differencing, and identity switches introduce artificial displacement 
+jumps. A standard mitigation is to apply a plausibility cap, discarding 
+speed estimates that exceed a physically reasonable upper bound for human 
+running speed. This acts as a hard gate analogous to the displacement 
+constraint used in ball detection 
+(Section~\ref{sec:background_ball_detection}): observations that imply 
+physically implausible dynamics are suppressed regardless of their origin. 
+Only displacements corresponding to speeds below the cap contribute to the 
+distance accumulation in Equation~\eqref{eq:distance_pitch_space}. This is 
+consistent with the wider football-performance literature, where running 
+statistics are informative but depend strongly on how the underlying 
+trajectories are obtained and filtered \cite{Altmann2021, Gualtieri2023}.
+
+The spatial analytics described in this section are evaluated in 
+Chapter~\ref{ch:evaluation}, where their dependence on registration and 
+tracking quality is examined directly.
+
+\section{Event Reasoning and Match Statistics}
+\label{sec:background_events_stats}
+
+Once players and the ball have been projected into pitch space, higher-level 
+match events can be expressed as rules over trajectories rather than as 
+isolated image observations. The main event-level outputs in this project are 
+possession, passes, and offside. These quantities are not observed directly 
+by the detector; instead, they are inferred from tracked spatial relationships 
+over time, making them dependent on both geometric registration and temporal 
+consistency \cite{Theiner2022}.
+
+\subsection{Ball Possession Estimation}
+\label{subsec:background_possession}
+
+A simple operational definition of possession is based on spatial proximity 
+between the ball and the nearest eligible player. Let $\mathbf{b}_t \in 
+\mathbb{R}^2$ denote the ball position in pitch space at frame $t$, and let 
+$\mathbf{p}_t^{(i)} \in \mathbb{R}^2$ denote the position of player $i$, 
+drawn from a candidate set $\mathcal{A}_t$ of on-pitch players excluding 
+referees. The ball holder at frame $t$ is defined as
+\begin{equation}
+    h_t = \arg\min_{i \in \mathcal{A}_t} 
+    \left\|\mathbf{b}_t - \mathbf{p}_t^{(i)}\right\|_2,
+    \label{eq:nearest_ball_holder}
+\end{equation}
+subject to the constraint that $\left\|\mathbf{b}_t - 
+\mathbf{p}_t^{(h_t)}\right\|_2 \leq d_{\max}$ for some maximum possession 
+radius $d_{\max}$; if no player satisfies this constraint, possession is 
+unassigned at frame $t$.
+
+This definition is interpretable and naturally expressed in pitch coordinates. 
+However, it is a heuristic approximation: it can fail when the ball is 
+airborne, when multiple players challenge simultaneously, or when localisation 
+error changes which player appears closest. To reduce short-term noise, 
+possession is confirmed only when the same player remains the nearest valid 
+holder for a minimum number of consecutive frames, preventing rapid switching 
+caused by detector jitter or brief localisation errors.
+
+\subsection{Pass Detection}
+\label{subsec:background_pass_detection}
+
+A pass is modelled as a stable transition in ball possession from one player 
+to another. Given the possession sequence $\{h_t\}$, a candidate pass event 
+at frame $t$ is detected when
+\begin{equation}
+    h_t \neq h_{t-1},
+    \label{eq:holder_transition}
+\end{equation}
+subject to the additional condition that both $h_{t-1}$ and $h_t$ are 
+confirmed holders --- that is, each has been assigned possession for at least 
+a minimum number of consecutive frames. This filters out spurious transitions 
+caused by brief detection noise \cite{Goes2021}.
+
+The moment at which possession changes provides a practical approximation to 
+the instant at which the ball is played, which is central to offside analysis. 
+This makes pass detection not merely a statistic in itself, but a prerequisite 
+for the temporal anchor used in offside reasoning.
+
+\subsection{Offside Rule Formalisation}
+\label{subsec:background_offside}
+
+Offside is one of the most spatially structured rules in football and a 
+natural target for pitch-space reasoning. Under Law~11, a player is in an 
+offside position if, at the moment the ball is played by a team-mate, they 
+are in the opponents' half and nearer to the opponents' goal line than both 
+the ball and the second-last opponent \cite{IFAB2025}.
+
+For an automated system, a tractable formulation is to detect 
+\emph{positional offside}: whether an attacking player satisfies the geometric 
+conditions at the relevant moment. Let $x_t^{(a)}$ denote the pitch-space 
+coordinate of an attacking player along the attacking axis, $x_t^{(b)}$ the 
+corresponding ball coordinate, and $x_t^{(o_2)}$ the coordinate of the 
+second-last opponent. The positional offside condition is
+\begin{equation}
+    x_t^{(a)} > \max\!\left(x_t^{(b)},\; x_t^{(o_2)}\right),
+    \label{eq:offside_basic}
+\end{equation}
+together with the requirement that the attacker is in the opponents' half. 
+Expressing this as a single $\max$ makes the condition more compact and 
+correctly captures that the attacker must be beyond both the ball and the 
+second-last opponent simultaneously. Figure~\ref{fig:offside_geometry} 
+illustrates a detected positional offside situation, showing both the 
+broadcast view and the corresponding pitch-space geometry used to evaluate 
+Equation~\eqref{eq:offside_basic}.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{images/offside_geometry.png}
+    \caption{Automated positional offside detection on a representative 
+             broadcast frame. (a)~Broadcast view with player positions 
+             overlaid; one attacking player is flagged as offside (red 
+             bounding box). (b)~Corresponding bird's-eye projection 
+             showing all player positions coloured by team, the offside 
+             line (dashed red) computed as $x = \max(x_t^{(b)}, 
+             x_t^{(o_2)})$ from Equation~\eqref{eq:offside_basic}, the 
+             second-last defender (diamond marker), and the attacking 
+             direction; the flagged player lies beyond the offside line.}
+    \label{fig:offside_geometry}
+\end{figure}
+
+This formulation highlights why pitch-space geometry is essential: offside 
+cannot be judged reliably in image space because perspective distortion alters 
+apparent distances and orderings. By mapping all relevant entities into a 
+common pitch coordinate system, the comparison reduces to a one-dimensional 
+ordering problem along the attacking direction.
+
+A practical requirement is that the attacking direction must be known. In a 
+broadcast pipeline this is not given directly and is instead inferred from the 
+trend of each team's centroid position over time: the team whose centroid 
+moves consistently towards one goal is taken to be the attacking team for that 
+phase of play. This makes offside reasoning dependent not only on accurate 
+player and ball localisation, but also on the stability of team identities and 
+geometric calibration.
+
+The simplified formulation in Equation~\eqref{eq:offside_basic} is an 
+approximation. Law~11 depends on the precise moment the ball is played and on 
+whether an offside-positioned player becomes involved in active play --- 
+details that a trajectory-based pipeline cannot fully recover. Automated 
+offside analysis should therefore be interpreted as positional offside 
+detection rather than a complete implementation of the law \cite{IFAB2025}. 
+The accuracy of this approximation is examined in 
+Chapter~\ref{ch:evaluation}.
+
+\section{Error Propagation in a Multi-Stage Pipeline}
+\label{sec:background_error_propagation}
+
+A broadcast-football analysis system is naturally a multi-stage pipeline in 
+which later outputs are produced not directly from the input video but from 
+intermediate estimates generated by earlier modules. Errors therefore do not 
+remain local to the component in which they arise; they propagate forward and 
+affect all downstream analysis. This is an important theoretical 
+consideration in end-to-end sports-video pipelines, where detection, 
+tracking, registration, and event reasoning are tightly 
+coupled \cite{Theiner2022, TVCalib2023}.
+
+At an abstract level, the pipeline can be viewed as a composition of 
+functions
+\begin{equation}
+    y = f_n \!\left( f_{n-1} \!\left( \cdots f_2(f_1(x)) \cdots \right) 
+    \right),
+    \label{eq:pipeline_composition}
+\end{equation}
+where $x$ is the input video, each $f_k$ represents one processing stage, 
+and $y$ is a final output such as a heatmap, possession estimate, or offside 
+decision. In the present project, the stages $f_1, \ldots, f_n$ correspond 
+to object detection, multi-object tracking, unsupervised team identification, 
+pitch keypoint detection, planar-homography registration, and pitch-space 
+event reasoning. Each stage consumes the structured output of its 
+predecessors rather than the raw video. If the output of stage $k$ is 
+perturbed by some error $\delta_k$, the downstream effect on the final 
+output,
+\begin{equation}
+    \Delta y = f_n \!\left( \cdots f_{k+1}(f_k(x_k) + \delta_k) \cdots 
+    \right) - y,
+    \label{eq:error_propagation}
+\end{equation}
+depends both on the magnitude of $\delta_k$ and on the sensitivity of all 
+subsequent stages to it.
+
+In this project, several forms of propagation are especially consequential. 
+A missed detection may break a player trajectory, which can in turn reduce 
+the stability of team assignment and corrupt movement statistics. An identity 
+switch in the tracker may artificially inflate estimated distance covered or 
+create false changes in possession. A registration error in the homography 
+may shift projected player positions, distorting heatmaps and changing the 
+relative ordering of attackers and defenders in offside analysis. An 
+incorrect team label may cause possession, pass counts, or attacking 
+direction to be inferred incorrectly, even if the underlying detections and 
+tracks are geometrically accurate.
+
+This dependency structure means that downstream outputs cannot be interpreted 
+independently of upstream quality. A poor offside decision may reflect not 
+only a weakness in the event logic itself, but also earlier errors in ball 
+localisation, player tracking, team assignment, or pitch registration. 
+Similarly, noisy speed estimates may originate from homography jitter or 
+identity fragmentation rather than from the estimation formula alone.
+
+End-to-end evaluation of a football analysis pipeline should therefore 
+combine component-level metrics with explicit analysis of downstream 
+behaviour \cite{Goes2021, HOTA2020}. Component-level evaluation identifies 
+where errors originate; system-level evaluation shows how those errors affect 
+the usefulness of the integrated outputs. This motivates the evaluation 
+strategy adopted in Chapter~\ref{ch:evaluation}, where both individual 
+modules and the final pipeline outputs are assessed.
+
+\section{Chapter Summary}
+\label{sec:background_summary}
+
+This chapter has established the theoretical foundation for each component 
+of the broadcast football analysis pipeline. The progression from object 
+detection and dedicated ball detection through multi-object tracking, 
+unsupervised team identification, pitch registration, and pitch-space 
+analytics reflects a deliberate decomposition: each stage reduces a 
+complex vision problem to a well-defined input--output contract, allowing 
+errors to be localised and components to be evaluated independently. The 
+error propagation analysis in Section~\ref{sec:background_error_propagation} 
+makes explicit that this modularity does not eliminate inter-stage 
+dependencies; it only makes them tractable.
+
+The concepts, metrics, and formalisms introduced here --- IoU, HOTA, DLT 
+homography, $k$-means clustering, temporal smoothing, and positional offside 
+--- are used directly in Chapter~\ref{ch:methodology} to describe 
+implementation decisions and in Chapter~\ref{ch:evaluation} to assess 
+pipeline performance. Where design choices deviate from the simplest 
+possible approach --- such as the use of a dedicated ball detector, 
+torso-only embeddings, or a proximity-based rather than model-based offside 
+trigger --- the theoretical justification established here provides the 
+basis for those decisions.
