@@ -156,6 +156,20 @@ python -m src.track_video_supervision \
   --max-frames 200
 ```
 
+### Streamlit UI
+
+A lightweight browser UI is also available. It wraps the CLI in a subprocess and exposes
+the common options (tracker, preview/full, bird's-eye, side-by-side, heatmaps, stats,
+pitch debug, offside, `conf`, `iou`, `ball_conf`, `pitch_stride`, `kp_conf`, `team_smooth`).
+
+```bash
+pip install streamlit                      # if not already installed via requirements.txt
+streamlit run src/ui/app.py                # run from the project root
+```
+
+Logs stream live to the page; generated videos are embedded and JSON / heatmap files are
+offered as downloads once the run finishes.
+
 **Platform note:** On macOS, always use `--team-device cpu` (CUDA is not available). On machines with an NVIDIA GPU, use `--team-device cuda`.
 
 ---

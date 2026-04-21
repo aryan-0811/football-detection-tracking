@@ -12,6 +12,7 @@ protobuf
 roboflow
 inference
 python-dotenv
+streamlit
 
 # Roboflow sports library (TeamClassifier) — install separately from source:
 # git clone https://github.com/roboflow/sports.git
