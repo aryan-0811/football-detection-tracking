@@ -1,365 +1,1007 @@
 \chapter{Methodology and Implementation}
 \label{ch:methodology}
 
+% \section{Chapter Overview}
+% \label{sec:methodology_overview}
+
+% This chapter describes the methodology used to design, implement, and
+% evaluate the proposed broadcast football video analysis system. Building on
+% the background and related work discussed in Chapter~\ref{ch:background},
+% the aim is to construct an open and reproducible pipeline that takes a single
+% broadcast football video as input and produces both visual and quantitative
+% tactical outputs.
+
+% The chapter begins by defining the requirements and design objectives that
+% guided the system. It then presents the overall system architecture, including
+% the main processing stages, intermediate representations, and final outputs.
+% The following sections describe the datasets and training procedures used for
+% the detection and pitch keypoint models, before explaining the main pipeline
+% components: object and ball detection, multi-object tracking, team
+% identification, pitch registration, and tactical output generation.
+
+% Particular attention is given to the design choices made at each stage, since
+% the performance of later components depends directly on the reliability of
+% earlier ones. For example, ball detection affects possession and pass
+% estimation, while pitch registration affects heatmaps, speed calculation, and
+% offside candidate detection. The chapter therefore describes not only what was
+% implemented, but also why each method was selected and how errors are managed
+% where possible.
+
+% The final sections describe the evaluation methodology and reproducibility
+% measures. These include component-level evaluation, end-to-end pipeline
+% evaluation, ablation studies, runtime measurement, and error analysis. Results
+% from these evaluations are reported in Chapters~\ref{ch:results}
+% and~\ref{ch:evaluation}.
+
 \section{Chapter Overview}
 \label{sec:methodology_overview}
 
-This chapter describes the methodology used to design, implement, and
-evaluate the proposed broadcast football video analysis system. Building on
-the background and related work discussed in Chapter~\ref{ch:background},
-the aim is to construct an open and reproducible pipeline that takes a single
-broadcast football video as input and produces both visual and quantitative
-tactical outputs.
+Chapter~\ref{ch:background} surveyed the methods relevant to each stage of a
+broadcast football analysis pipeline---object detection, tracking, team
+identification, pitch registration, and the derivation of tactical outputs---without
+committing to a specific realisation. This chapter moves from that theoretical
+grounding to the concrete system developed for this project, describing the
+architecture and implementation of each stage and the reasoning behind the
+choices made at each one.
 
-The chapter begins by defining the requirements and design objectives that
-guided the system. It then presents the overall system architecture, including
-the main processing stages, intermediate representations, and final outputs.
-The following sections describe the datasets and training procedures used for
-the detection and pitch keypoint models, before explaining the main pipeline
-components: object and ball detection, multi-object tracking, team
-identification, pitch registration, and tactical output generation.
+The pipeline takes a single broadcast video stream as input and processes it
+through a sequence of stages: player, goalkeeper, referee and ball detection with
+dedicated YOLO models; multi-object tracking by association; team identification
+via SigLIP embeddings of torso crops followed by dimensionality reduction and
+clustering; pitch registration from keypoint correspondences resolved into a
+planar homography; and projection of tracked players into a pitch-coordinate
+frame from which heatmaps, speed and distance, possession, and offside geometry
+are derived. Each stage consumes the output of those preceding it, and the
+chapter follows this same ordering so that each design decision can be read in
+the context of the inputs it must handle and the outputs it must produce.
 
-Particular attention is given to the design choices made at each stage, since
-the performance of later components depends directly on the reliability of
-earlier ones. For example, ball detection affects possession and pass
-estimation, while pitch registration affects heatmaps, speed calculation, and
-offside candidate detection. The chapter therefore describes not only what was
-implemented, but also why each method was selected and how errors are managed
-where possible.
+For each stage, the chapter justifies the design choice against the alternatives
+surveyed in Chapter~\ref{ch:background}, specifies parameter values and
+algorithmic details in sufficient detail for a peer to reproduce the work, and
+presents illustrative outputs from the implemented system. The datasets used
+for training the bespoke detection and keypoint models are described, together
+with the training procedure and the resulting model artefacts. The chapter also
+defines the evaluation methodology that will be applied in
+Chapter~\ref{ch:evaluation}, setting out the metrics, test data, and protocols
+by which each pipeline stage and the system as a whole will be assessed.
 
-The final sections describe the evaluation methodology and reproducibility
-measures. These include component-level evaluation, end-to-end pipeline
-evaluation, ablation studies, runtime measurement, and error analysis. Results
-from these evaluations are reported in Chapters~\ref{ch:results}
-and~\ref{ch:evaluation}.
+Chapter~\ref{ch:results} presents the results obtained by running the pipeline
+on evaluation data, and Chapter~\ref{ch:evaluation} discusses those results and
+their implications; the present chapter is concerned with how the system was
+built and why, not with its measured performance.
 
 \section{Requirements and Design Objectives}
-\label{sec:requirements_design_objectives}
+\label{sec:methodology_requirements}
 
-The methodology of the system was guided by the overall aim of producing an
-open and reproducible pipeline for tactical football analysis from broadcast
-video alone. This required the system to recover player, ball, team, and pitch
-information from a single moving-camera feed, and to transform these
-intermediate outputs into analytically useful representations such as heatmaps,
-possession statistics, pass events, and candidate offside situations.
-
-To ensure that the design remained aligned with this aim, the system was
-specified in terms of functional requirements, non-functional requirements, and
-success criteria. These requirements were used both to guide implementation
-choices and to define the basis for later evaluation.
+Before the system architecture is presented, this section sets out the
+requirements the pipeline is designed to meet. Functional requirements define
+what the system must do; non-functional requirements define the qualities it
+should exhibit; and success criteria state the measurable thresholds against
+which each component will be judged in Chapter~\ref{ch:evaluation}. The
+requirements derive from the project aims set out in
+Chapter~\ref{ch:introduction} and are framed here in terms suited to system
+design, so that the architectural and implementation choices described in the
+remainder of this chapter can be read against them.
 
 \subsection{Functional Requirements}
 \label{subsec:functional_requirements}
 
-The functional requirements describe the core capabilities that the system was
-expected to provide.
+The functional requirements describe the end-to-end behaviour of the pipeline.
+The system takes as input a single broadcast football video and produces, for
+each frame, a set of per-object detections, persistent track identities, team
+labels, pitch-coordinate positions, and a collection of derived tactical
+outputs. The requirements are decomposed by pipeline stage so that each
+subsequent section of this chapter can be mapped directly to the requirement
+it satisfies.
 
-\begin{itemize}
-    \item \textbf{FR1: Object detection.} The system must detect the main
-    entities required for football analysis, namely players, goalkeepers,
-    referees, and the ball, from broadcast frames.
+\paragraph{FR1: Object detection.} The system shall detect the four classes
+relevant to broadcast football analysis---players, goalkeepers, referees, and
+the ball---in each frame of the input video, returning axis-aligned bounding
+boxes and class labels. Given the extreme scale disparity between outfield
+players and the ball, detection of the ball shall be handled by a dedicated
+model operating at the same input resolution but with its own training regime
+and confidence regime, rather than relying on the generic detector alone.
 
-    \item \textbf{FR2: Temporal tracking.} The system must maintain player
-    identities across frames so that movement-based analytics can be computed
-    over time.
+\paragraph{FR2: Multi-object tracking.} The system shall maintain consistent
+identities for detected players, goalkeepers, and referees across frames,
+associating detections over time into persistent tracks. Tracker choice shall
+be configurable so that alternative association strategies can be compared.
+Ball identity is not required to persist, since the ball is a single object
+and its per-frame localisation is sufficient for downstream use.
 
-    \item \textbf{FR3: Team identification.} The system must assign players to
-    teams without requiring match-specific labelled training data for each new
-    fixture.
+\paragraph{FR3: Team identification.} The system shall assign each tracked
+player to one of two teams without manual labels, using visual appearance
+alone. The assignment shall be stable over time: transient misclassification
+on a single frame shall not be allowed to propagate as the team label returned
+for a track. Goalkeepers, whose kits typically differ from their outfield
+teammates, shall be resolved to a team by a separate mechanism rather than
+being forced into the outfield clustering.
 
-    \item \textbf{FR4: Pitch registration.} The system must estimate a mapping
-    from image coordinates to a canonical pitch model so that image-space
-    detections can be analysed in real-world pitch space.
+\paragraph{FR4: Pitch registration.} The system shall recover the planar
+homography between the broadcast image and a canonical pitch model, permitting
+image-plane coordinates to be mapped to pitch-plane coordinates. Registration
+shall tolerate the fact that the full pitch is rarely visible in a broadcast
+frame, and shall degrade gracefully when insufficient correspondences are
+available in a given frame by reusing the most recent valid transform until a
+new valid estimate is obtained.
 
-    \item \textbf{FR5: Tactical output generation.} The system must derive
-    higher-level outputs from the tracked and registered data, including player
-    heatmaps, speed and distance estimates, team possession statistics, pass
-    events, and candidate offside situations.
+\paragraph{FR5: Tactical output generation.} From the projected per-track
+trajectories the system shall derive a set of tactical outputs: per-player
+heatmaps of pitch occupation, speed and distance statistics, team possession,
+pass events, and offside candidate frames. Each output shall be produced in
+pitch coordinates, so that the reported quantities are physically meaningful
+rather than tied to the broadcast view.
 
-    \item \textbf{FR6: Visual output generation.} The system must produce
-    interpretable outputs that support inspection of intermediate and final
-    results, including annotated broadcast video, bird's-eye visualisations,
-    side-by-side renderings, JSON statistics, and heatmap images.
-\end{itemize}
+\paragraph{FR6: Visualisation and persistence.} The system shall render the
+principal outputs for inspection---annotated broadcast video with detection,
+track, and team overlays; a bird's-eye projection of tracked objects onto the
+pitch model; and rendered heatmaps---and shall persist these together with any
+per-frame numerical outputs so that results can be reviewed offline and used
+as input to the evaluation procedure.
 
 \subsection{Non-functional Requirements}
-\label{subsec:non_functional_requirements}
+\label{subsec:nonfunctional_requirements}
 
-The non-functional requirements describe the practical and technical qualities
-expected of the system beyond its core functionality.
+The non-functional requirements describe qualities the system should exhibit
+irrespective of the specific outputs it produces.
 
-\begin{itemize}
-    \item \textbf{NFR1: Reproducibility.} The system should be executable from
-    stored model weights, configuration parameters, and documented runtime
-    dependencies, so that results can be reproduced consistently.
+\paragraph{NFR1: Reproducibility.} The full configuration required to
+reproduce a given run---model weights, parameter values, and preset
+selections---shall be recoverable from a single set of launch arguments, and
+the training of any bespoke models shall be recorded with sufficient detail
+(dataset, hyperparameters, training curves) to be repeated by a peer.
 
-    \item \textbf{NFR2: Modularity.} The pipeline should be structured as a set
-    of separable stages so that individual components, such as the tracker,
-    team classifier, or pitch registration module, can be analysed, replaced,
-    or improved independently.
+\paragraph{NFR2: Modularity.} Each pipeline stage shall be implemented as a
+self-contained component with a clearly defined input and output contract, so
+that an individual stage can be replaced, reconfigured, or evaluated in
+isolation without requiring changes to the surrounding system.
 
-    \item \textbf{NFR3: Robustness to broadcast conditions.} The system should
-    remain usable under common broadcast challenges, including camera motion,
-    partial occlusion, missed detections, and noisy pitch registration.
+\paragraph{NFR3: Configurability.} Parameter values that govern behaviour at
+runtime---detection thresholds, tracker selection, inference strides, warmup
+sizes, smoothing windows, displacement gates---shall be exposed through the
+command-line interface rather than embedded in source code, and reasonable
+defaults shall be provided in a single location so that the system can be run
+without a long argument list.
 
-    \item \textbf{NFR4: Interpretability.} Intermediate and final outputs
-    should be inspectable by a human observer, allowing incorrect detections,
-    unstable tracks, registration failures, and tactical inference errors to be
-    identified and analysed.
+\paragraph{NFR4: Robustness to broadcast artefacts.} The pipeline operates on
+broadcast video rather than instrumented capture, and must therefore tolerate
+partial occlusion, motion blur, pan-tilt-zoom camera motion, and the
+appearance of on-screen graphics without catastrophic failure. Robustness is
+treated as a design objective at each stage rather than as a single global
+property, with appropriate mechanisms (temporal smoothing, displacement gates,
+majority-vote filtering) introduced where individual stages are known to be
+sensitive.
 
-    \item \textbf{NFR5: Practical runtime.} The system should process complete
-    match clips in a practically manageable time, even if the design prioritises
-    analytical accuracy over real-time deployment.
-\end{itemize}
+\paragraph{NFR5: Graceful degradation.} When an individual stage cannot
+produce a usable output for a given frame, the pipeline shall continue to
+operate on subsequent frames rather than terminate. For pitch registration in
+particular, the system shall retain the most recent valid homography and
+reuse it until a new valid estimate is produced. The extent to which other
+stages meet this objective is discussed alongside the relevant component.
+
+\paragraph{NFR6: Inspectability.} Intermediate outputs of the pipeline---raw
+detections, tracked identities, projected positions, registration overlays,
+per-track statistics---shall be exposable for inspection, so that failure
+modes can be localised to specific stages during development and evaluation,
+and so that the evaluation procedure can assess each stage independently.
+
+\paragraph{NFR7: Runtime.} The pipeline is intended for offline post-match
+analysis rather than real-time or live operation. Runtime is therefore not a
+primary design objective: the system shall complete processing of a broadcast
+clip on a single consumer GPU within a reasonable working session, but no
+throughput target is set, and design decisions throughout the pipeline
+prioritise per-stage accuracy and inspectability over end-to-end speed. The
+measured processing cost and the stages that dominate it are discussed
+alongside the results in Chapter~\ref{ch:evaluation}.
 
 \subsection{Success Criteria}
 \label{subsec:success_criteria}
 
-The success of the system was defined in terms of both component-level and
-end-to-end behaviour.
+The success criteria restate, in measurable form, the conditions under which
+each functional requirement is considered satisfactorily met. Specific
+numerical thresholds are stated where they derive from the project aims set
+in Chapter~\ref{ch:introduction}; the full evaluation protocols by which
+these are assessed are given in Section~\ref{sec:evaluation_methodology} and
+applied in Chapter~\ref{ch:evaluation}.
 
-At the component level, the detector should localise the relevant classes with
-useful accuracy, the tracker should preserve identities with limited
-fragmentation, the team identification stage should assign stable team labels,
-and the pitch registration stage should produce sufficiently consistent
-transformations for downstream pitch-space analysis. At the end-to-end level,
-the pipeline should generate coherent visualisations and plausible tactical
-outputs across real broadcast clips.
+\paragraph{SC1 (FR1, Detection).} The generic object detector shall achieve a
+mean average precision of at least \todo{[target mAP@0.5 from Ch1]} on the
+held-out test split, with per-class performance reported for player,
+goalkeeper, and referee. The dedicated ball detector shall achieve a per-frame
+recall of at least \todo{[target]} under the confidence regime used at
+inference, at a false-positive rate that the temporal-filtering stage
+(Section~\ref{sec:ball_pipeline}) can reasonably suppress.
 
-In practical terms, the project was considered successful if it could:
+\paragraph{SC2 (FR2, Tracking).} Tracking performance shall be reported using
+the HOTA family of metrics~\cite{HOTA2020}, with a target HOTA of at least
+\todo{[target]} on the evaluation clips. Identity switches shall be reported
+alongside and kept below \todo{[target]} per minute of broadcast time.
 
-\begin{itemize}
-    \item produce stable annotated video outputs showing tracked and labelled
-    entities;
-    \item generate bird's-eye projections that remain visually aligned with the
-    broadcast scene;
-    \item produce usable player heatmaps and per-player spatial statistics;
-    \item estimate possession and pass events in a way that is consistent with
-    manual inspection of representative clips; and
-    \item identify candidate offside situations in pitch space under the
-    assumptions defined later in this chapter.
-\end{itemize}
+\paragraph{SC3 (FR3, Team identification).} The per-frame team assignment
+shall agree with manually annotated ground truth on at least \todo{[target]}
+of sampled player crops, and the per-track label returned after temporal
+smoothing shall agree on at least \todo{[target]} of tracks. Goalkeeper
+assignment shall be correct on at least \todo{[target]} of goalkeeper tracks.
 
-These success criteria also shaped the evaluation design. Rather than judging
-the project only by model-level training metrics, the system is assessed both
-at the level of individual components and as an integrated pipeline, since the
-ultimate objective is not only accurate reconstruction, but analytically useful
-football outputs from broadcast video.
+\paragraph{SC4 (FR4, Registration).} Pitch registration shall achieve a mean
+reprojection error of no more than \todo{[target, in pitch metres]} on
+evaluation frames where ground-truth correspondences are available, and shall
+produce a valid homography on at least \todo{[target]} of frames in a
+continuous broadcast clip.
+
+\paragraph{SC5 (FR5, Tactical outputs).} Tactical outputs shall be plausible
+when inspected against the broadcast source: heatmaps shall reflect known
+player roles, speed and distance values shall fall within physically
+reasonable ranges reported in the sports-science literature, possession
+totals shall be consistent with a human annotator's reading of the clip,
+detected pass events shall match annotated passes with a precision and recall
+of at least \todo{[target]}, and offside candidate frames shall agree with a
+human referee's reading.
+
+\paragraph{SC6 (End-to-end usefulness).} When run end-to-end on unseen
+broadcast footage, the system shall produce the full set of visualisations
+and statistics described under FR6 without manual intervention, and the
+resulting outputs shall be informative enough that a non-specialist viewer
+can interpret the match in tactical terms from the produced artefacts alone.
+
+% \section{System Architecture}
+% \label{sec:system_architecture}
+
+% The system was designed as a modular pipeline in which each stage transforms
+% the output of the previous stage into a representation that is more useful for
+% football analysis. This design was chosen because the overall task is too
+% complex to solve reliably as a single monolithic prediction problem: player
+% locations, ball position, team identity, pitch geometry, and tactical events
+% each require different forms of visual and geometric reasoning. A modular
+% architecture also supports debugging, replacement of individual components,
+% and component-level evaluation, which are important for reproducibility and
+% critical analysis.
+
+% \subsection{Pipeline Overview}
+% \label{subsec:pipeline_overview}
+
+% Figure~\ref{fig:pipeline_overview} shows the overall architecture of the
+% pipeline. The input is a broadcast football video. The output is an annotated
+% video together with optional bird's-eye visualisations, side-by-side videos,
+% heatmaps, possession and pass statistics, and detected offside candidate
+% events.
+
+% \begin{figure}[ht]
+%     \centering
+%     \includegraphics[width=\linewidth]{images/pipeline_overview.png}
+%     \caption{Overview of the proposed broadcast football video analysis
+%     pipeline. The system begins with object and ball detection, then applies
+%     tracking, team identification, pitch registration, and tactical analysis
+%     to produce visual and quantitative outputs.}
+%     \label{fig:pipeline_overview}
+% \end{figure}
+
+% The pipeline consists of two main phases. The first is a warm-up phase used to
+% fit the team identification model from player crops sampled near the beginning
+% of the video. The second is a per-frame processing phase in which detections,
+% tracks, team labels, pitch coordinates, visualisations, and statistics are
+% updated continuously.
+
+% \subsection{Data Flow and Intermediate Representations}
+% \label{subsec:data_flow_intermediate_representations}
+
+% Each frame is first processed by the main object detector, which identifies
+% players, goalkeepers, referees, and ball candidates. A dedicated ball detector
+% is then applied to improve ball localisation, since the ball is small and
+% frequently missed by the general detector. The resulting detections are passed
+% to a multi-object tracker, which assigns persistent track identifiers to
+% players across frames.
+
+% Team identification is performed using player crops. During the warm-up phase,
+% player crops are sampled from the video and used to fit an unsupervised team
+% classifier. During the per-frame phase, each tracked player is assigned a team
+% label, and temporal smoothing is applied to reduce frame-level instability.
+% Goalkeepers are handled separately using spatial proximity to the detected
+% outfield teams, while referees are assigned to a non-team class.
+
+% Pitch registration is performed by detecting pitch keypoints and estimating a
+% homography between the broadcast frame and a canonical pitch model. This
+% allows image-space detections to be transformed into pitch-space coordinates.
+% Pitch-space coordinates are then used to generate bird's-eye visualisations,
+% heatmaps, speed and distance estimates, possession statistics, pass events,
+% and offside candidate detections.
+
+% The main intermediate representations used by the system are:
+
+% \begin{itemize}
+%     \item \textbf{Bounding boxes}, representing detected players, goalkeepers,
+%     referees, and ball candidates in image space.
+
+%     \item \textbf{Track identifiers}, representing temporally consistent
+%     player identities across frames.
+
+%     \item \textbf{Team labels}, representing the inferred team membership of
+%     each tracked player.
+
+%     \item \textbf{Pitch keypoints}, representing detected landmarks on the
+%     football pitch.
+
+%     \item \textbf{Homography matrices}, representing the mapping from image
+%     coordinates to pitch coordinates.
+
+%     \item \textbf{Pitch-space coordinates}, representing object locations in a
+%     canonical coordinate system suitable for tactical analysis.
+% \end{itemize}
+
+% \subsection{System Outputs}
+% \label{subsec:system_outputs}
+
+% The system produces several forms of output so that both intermediate behaviour
+% and final tactical results can be inspected. The main output is an annotated
+% broadcast video in which detected players, goalkeepers, referees, and the ball
+% are visualised with track and team information. When pitch registration is
+% enabled, the system can also generate a bird's-eye video and a side-by-side
+% video combining the original broadcast view with the pitch-space
+% representation.
+
+% In addition to video outputs, the pipeline can export structured data. Player
+% and team statistics are written to JSON files, including possession estimates,
+% pass counts, player speed estimates, and distance travelled. Candidate offside
+% events are also exported as structured records, allowing them to be inspected
+% after processing. Player heatmaps are saved as image files and raw numerical
+% arrays so that the spatial distribution of each tracked player can be analysed
+% or reproduced later.
+
+% This separation between visual outputs and structured outputs is important
+% because the system must support both qualitative inspection and quantitative
+% evaluation. Visual outputs make it possible to diagnose errors such as missed
+% detections, team-label switches, or unstable registration, while structured
+% outputs allow the downstream tactical analysis to be evaluated more
+% systematically in Chapters~\ref{ch:results} and~\ref{ch:evaluation}.
 
 \section{System Architecture}
-\label{sec:system_architecture}
+\label{sec:methodology_architecture}
 
-The system was designed as a modular pipeline in which each stage transforms
-the output of the previous stage into a representation that is more useful for
-football analysis. This design was chosen because the overall task is too
-complex to solve reliably as a single monolithic prediction problem: player
-locations, ball position, team identity, pitch geometry, and tactical events
-each require different forms of visual and geometric reasoning. A modular
-architecture also supports debugging, replacement of individual components,
-and component-level evaluation, which are important for reproducibility and
-critical analysis.
+This section describes the architecture of the pipeline at a level that
+permits the work to be reproduced by a peer. The pipeline is presented first
+as a structural overview, showing how the stages are composed and where
+models, rule-based logic, and caching enter the design
+(Section~\ref{subsec:pipeline_overview}). The data objects passed between
+stages are then specified with their types, shapes, and provenance
+(Section~\ref{subsec:data_flow}), and the user-facing outputs of the system
+are catalogued (Section~\ref{subsec:system_outputs}). The algorithmic
+content of each stage is deferred to Sections~\ref{sec:detection_tracking}
+through~\ref{sec:tactical_outputs}, which describe how the stages are
+realised and why.
 
 \subsection{Pipeline Overview}
 \label{subsec:pipeline_overview}
 
-Figure~\ref{fig:pipeline_overview} shows the overall architecture of the
-pipeline. The input is a broadcast football video. The output is an annotated
-video together with optional bird's-eye visualisations, side-by-side videos,
-heatmaps, possession and pass statistics, and detected offside candidate
-events.
+Figure~\ref{fig:pipeline_architecture} shows the end-to-end architecture.
+A single broadcast video frame is processed through two parallel branches
+that converge at a pitch-space projection stage, after which all
+higher-level analytics operate in a shared pitch coordinate frame rather
+than in the image plane.
 
-\begin{figure}[ht]
-    \centering
-    \includegraphics[width=\linewidth]{images/pipeline_overview.png}
-    \caption{Overview of the proposed broadcast football video analysis
-    pipeline. The system begins with object and ball detection, then applies
-    tracking, team identification, pitch registration, and tactical analysis
-    to produce visual and quantitative outputs.}
-    \label{fig:pipeline_overview}
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{images/pipeline_overview.png}
+  \caption{End-to-end pipeline architecture. The broadcast frame enters at
+  the top and is processed through two parallel branches---appearance-based
+  detection and tracking on the left, pitch-geometry recovery on the
+  right---which converge at the pitch-space projection stage. All
+  higher-level tactical analytics operate in pitch coordinates. Section
+  numbers on the left indicate where each stage is described in detail.}
+  \label{fig:pipeline_architecture}
 \end{figure}
 
-The pipeline consists of two main phases. The first is a warm-up phase used to
-fit the team identification model from player crops sampled near the beginning
-of the video. The second is a per-frame processing phase in which detections,
-tracks, team labels, pitch coordinates, visualisations, and statistics are
-updated continuously.
+The left branch handles \emph{what} is in the frame: objects are detected,
+outfield actors are tracked over time, and each tracked player is assigned
+to a team. The right branch handles \emph{where} the frame sits in
+pitch-space: canonical landmarks on the pitch are detected and resolved
+into a planar homography. The two branches are independent---no stage in
+one depends on an output of the other until they converge---and this
+independence is exploited at runtime, since pitch keypoints change slowly
+relative to player positions and the right branch is therefore executed at
+a lower frequency than the left.
+
+\paragraph{Models and rule-based components.} The appearance stages are
+fully model-based. A generic YOLO detector is run on each frame and
+produces bounding boxes for players, goalkeepers, and referees; a second
+YOLO detector dedicated to the ball is run in parallel on the same frame
+and is the authoritative source of ball localisation (the ball-class
+outputs of the generic detector are discarded, for reasons given in
+Section~\ref{sec:detection_tracking}). Pitch landmarks are produced by a
+keypoint model. The team identification stage combines a pretrained
+vision-language embedding model (SigLIP) with dimensionality reduction
+(UMAP) and a small unsupervised clustering step (k-means, $k=2$). The
+tracker is a learning-free multi-object association algorithm (ByteTrack,
+with BoT-SORT selectable) applied to the generic detector's player,
+goalkeeper, and referee outputs only; the ball is never passed to the
+tracker and instead passes through a lightweight temporal filter (nearest
+neighbour to the previous accepted position under a displacement gate)
+described in Section~\ref{sec:detection_tracking}. All stages downstream
+of projection---heatmap accumulation, speed and distance computation,
+possession, pass detection, offside geometry---are rule-based: they
+operate deterministically on projected trajectories and carry no learned
+parameters.
+
+\paragraph{Caching and stride.} Two caching mechanisms are used to control
+the per-frame computational cost. First, pitch keypoint inference is run
+once every \texttt{pitch-stride} frames (default 15) and the resulting
+homography is reused on intervening frames; when a new inference fails to
+produce a valid estimate, the last valid homography is retained. Second,
+team classification is fitted once during a warmup window at the start of
+the video (default 20\,s in the production preset) and reused thereafter;
+per-track team labels are produced by applying the fitted classifier to
+new crops and are stabilised by a majority-vote smoother over a 30-frame
+window. No other stage caches state across frames beyond the track state
+held internally by the tracker.
+
+\paragraph{Execution model.} The pipeline is driven by a single
+orchestration loop in \texttt{src/pipeline/run.py} that reads frames
+sequentially, invokes the stages in the order shown in
+Figure~\ref{fig:pipeline_architecture}, and writes outputs to disk. The
+loop is deliberately sequential rather than concurrent: the stages have
+strict data dependencies, intermediate outputs are required for
+inspection and evaluation (NFR6), and real-time operation is explicitly
+out of scope (NFR7).
 
 \subsection{Data Flow and Intermediate Representations}
-\label{subsec:data_flow_intermediate_representations}
+\label{subsec:data_flow}
 
-Each frame is first processed by the main object detector, which identifies
-players, goalkeepers, referees, and ball candidates. A dedicated ball detector
-is then applied to improve ball localisation, since the ball is small and
-frequently missed by the general detector. The resulting detections are passed
-to a multi-object tracker, which assigns persistent track identifiers to
-players across frames.
+The data objects passed between stages are summarised in
+Table~\ref{tab:data_flow}. Where possible the pipeline reuses the
+\texttt{supervision} library's native \texttt{Detections} type as the
+common currency of the detection--tracking--team-identification branch,
+which simplifies interoperation with the off-the-shelf tracker and
+annotation utilities. The cost of this choice is that per-stage metadata
+that does not fit the \texttt{Detections} schema must be handled out of
+band, as described below.
 
-Team identification is performed using player crops. During the warm-up phase,
-player crops are sampled from the video and used to fit an unsupervised team
-classifier. During the per-frame phase, each tracked player is assigned a team
-label, and temporal smoothing is applied to reduce frame-level instability.
-Goalkeepers are handled separately using spatial proximity to the detected
-outfield teams, while referees are assigned to a non-team class.
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l X X X@{}}
+    \toprule
+    \textbf{Object} & \textbf{Fields} & \textbf{Producer} & \textbf{Consumer(s)} \\
+    \midrule
+    Raw detection set
+      & \texttt{xyxy}, \texttt{confidence}, \texttt{class\_id}
+      & Detector (\S\ref{sec:detection_tracking})
+      & Tracker \\
+    Tracked detection set
+      & $+$\,\texttt{tracker\_id}
+      & Tracker (\S\ref{sec:detection_tracking})
+      & Team ID, projection \\
+    Team-labelled detection set
+      & \texttt{class\_id} overwritten
+      & Team ID (\S\ref{sec:team_identification})
+      & Projection, analytics \\
+    Ball detection (filtered)
+      & \texttt{xyxy}, \texttt{confidence}
+      & Ball detector $+$ filter (\S\ref{sec:detection_tracking})
+      & Projection, analytics \\
+    Ball detections (generic)
+      & \texttt{xyxy}, \texttt{confidence}, \texttt{tracker\_id}
+      & Generic detector $+$ tracker
+      & \emph{Discarded} \\
+    View transformer
+      & $H \in \mathbb{R}^{3\times 3}$
+      & Pitch registration (\S\ref{sec:pitch_registration})
+      & Projection \\
+    Projected positions
+      & pitch coords (cm)
+      & Projection (\S\ref{sec:tactical_outputs})
+      & Heatmaps, stats, events \\
+    Event record
+      & $(t, \tau, \mathcal{I})$
+      & Event reasoning (\S\ref{sec:tactical_outputs})
+      & Logs, exports \\
+    \bottomrule
+  \end{tabularx}
 
-Pitch registration is performed by detecting pitch keypoints and estimating a
-homography between the broadcast frame and a canonical pitch model. This
-allows image-space detections to be transformed into pitch-space coordinates.
-Pitch-space coordinates are then used to generate bird's-eye visualisations,
-heatmaps, speed and distance estimates, possession statistics, pass events,
-and offside candidate detections.
+  \caption{Data objects passed between pipeline stages. The
+  \texttt{supervision.Detections} type is used throughout the left branch
+  of the pipeline with fields progressively populated and, in the case of
+  \texttt{class\_id}, reinterpreted.}
+  \label{tab:data_flow}
+\end{table}
+\paragraph{Detection and tracking record.} The core data object in the left
+branch is \texttt{supervision.Detections} with four populated fields. A
+raw detection set $\mathcal{D}$ of $N$ objects carries $\mathbf{B} \in
+\mathbb{R}^{N \times 4}$ for bounding boxes in absolute pixel coordinates
+$(x_1, y_1, x_2, y_2)$, $\mathbf{c} \in [0,1]^N$ for per-detection
+confidences, and $\mathbf{k} \in \{0,1,2,3\}^N$ for class identifiers
+under the detector's label set $\{0\!:\!\mathrm{ball},\,
+1\!:\!\mathrm{GK},\, 2\!:\!\mathrm{player},\, 3\!:\!\mathrm{referee}\}$.
+The tracker additionally populates $\mathbf{t} \in \mathbb{Z}^N$ with
+integer track identifiers on frames where association has succeeded; on
+frames where the tracker has produced no identifier, this field is
+absent.
 
-The main intermediate representations used by the system are:
+\paragraph{Encoding of team membership.} Team membership is encoded by
+overwriting the \texttt{class\_id} field in place rather than by adding a
+new field to the detection record. Following team assignment, the
+semantics of \texttt{class\_id} change: outfield players carry
+$\mathrm{class\_id} \in \{0, 1\}$ denoting team A or team B, goalkeepers
+are resolved to the same two-valued alphabet where possible and to the
+value $2$ otherwise, and referees are forced to $2$. This reinterpretation
+is deliberate: downstream renderers and exporters consume the field
+uniformly as a palette index, and the reuse avoids maintaining two
+parallel arrays that must be kept in lockstep. It is documented here
+explicitly because the value $2$ denotes \emph{referee or unresolved
+goalkeeper} after team assignment, not \emph{player} as in the raw
+detector output.
 
-\begin{itemize}
-    \item \textbf{Bounding boxes}, representing detected players, goalkeepers,
-    referees, and ball candidates in image space.
+\paragraph{Ball as a distinct data stream.} The ball is handled as a
+separate \texttt{supervision.Detections} instance throughout the pipeline.
+It is never merged with the outfield detection set, never carries a
+\texttt{tracker\_id}, and is consumed by downstream stages (bird's-eye
+render, offside detector, stats tracker) as a parallel argument alongside
+the outfield detections. On frames where the temporal filter rejects all
+candidates, the ball set is empty; downstream consumers treat this
+condition as a missing-ball frame rather than as an error. The rationale
+for this parallel-stream design is given in
+Section~\ref{sec:detection_tracking}.
 
-    \item \textbf{Track identifiers}, representing temporally consistent
-    player identities across frames.
+\paragraph{Pitch geometry and projected coordinates.} Pitch geometry is
+carried on a separate \texttt{ViewTransformer} object rather than attached
+to detections. The transformer encapsulates the $3 \times 3$ homography
+$H$ from broadcast-image pixels to a canonical pitch plane expressed in
+centimetres. Downstream consumers that require pitch-space positions
+(heatmap accumulation, speed and distance computation, possession, pass
+detection, offside geometry) receive the detection set and the
+transformer as separate arguments and compute
+$\tilde{\mathbf{p}} = H \cdot [x, y, 1]^\top$ internally from the
+bottom-centre anchor of each bounding box, applying the standard
+perspective divide. This out-of-band handling mirrors the fact that
+geometry changes on a different schedule from appearance: a single
+transformer is used across all detections in a frame, and often across
+multiple frames under the keypoint-stride caching scheme.
 
-    \item \textbf{Team labels}, representing the inferred team membership of
-    each tracked player.
+\paragraph{Event records.} Higher-level outputs produced by the analytics
+stage (possession segments, pass events, offside candidate frames) are
+represented as discrete records of the form $(t, \tau, \mathcal{I})$, where
+$t$ is a frame timestamp, $\tau$ is an event type, and $\mathcal{I}$ is a
+reference to the tracks and teams involved in the event. Records are
+accumulated across the video and exported as structured logs alongside the
+rendered visualisations.
 
-    \item \textbf{Pitch keypoints}, representing detected landmarks on the
-    football pitch.
-
-    \item \textbf{Homography matrices}, representing the mapping from image
-    coordinates to pitch coordinates.
-
-    \item \textbf{Pitch-space coordinates}, representing object locations in a
-    canonical coordinate system suitable for tactical analysis.
-\end{itemize}
+\paragraph{Persisted artefacts.} Each run produces a deterministic set of
+on-disk artefacts under a timestamped output directory: the annotated
+broadcast video, the bird's-eye render (when enabled), the side-by-side
+composite (when enabled), per-track heatmap images, per-track movement
+summaries, a possession timeline, a pass event log, and a flagged-frames
+list for offside candidates. These artefacts together form the input to
+the evaluation procedure described in
+Section~\ref{sec:evaluation_methodology} and are the basis of the results
+reported in Chapter~\ref{ch:evaluation}.
 
 \subsection{System Outputs}
 \label{subsec:system_outputs}
 
-The system produces several forms of output so that both intermediate behaviour
-and final tactical results can be inspected. The main output is an annotated
-broadcast video in which detected players, goalkeepers, referees, and the ball
-are visualised with track and team information. When pitch registration is
-enabled, the system can also generate a bird's-eye video and a side-by-side
-video combining the original broadcast view with the pitch-space
-representation.
+The system produces three families of outputs, corresponding to the three
+principal ways the results are consumed: inspection of the broadcast
+through augmented video, compact summary through bird's-eye
+visualisation, and analytical use through numerical exports.
 
-In addition to video outputs, the pipeline can export structured data. Player
-and team statistics are written to JSON files, including possession estimates,
-pass counts, player speed estimates, and distance travelled. Candidate offside
-events are also exported as structured records, allowing them to be inspected
-after processing. Player heatmaps are saved as image files and raw numerical
-arrays so that the spatial distribution of each tracked player can be analysed
-or reproduced later.
+\paragraph{Augmented broadcast.} The annotated broadcast video renders
+per-frame detections, persistent track identifiers, and team colour
+coding back onto the source frame. This artefact is the most direct
+qualitative evidence that the pipeline is operating correctly: detection
+misses, identity switches, and team misassignments are immediately
+visible against the broadcast action.
 
-This separation between visual outputs and structured outputs is important
-because the system must support both qualitative inspection and quantitative
-evaluation. Visual outputs make it possible to diagnose errors such as missed
-detections, team-label switches, or unstable registration, while structured
-outputs allow the downstream tactical analysis to be evaluated more
-systematically in Chapters~\ref{ch:results} and~\ref{ch:evaluation}.
+\paragraph{Bird's-eye visualisation.} The bird's-eye render projects every
+tracked outfield object, along with the ball, onto a scale drawing of the
+pitch. Objects are drawn as coloured discs whose colour encodes the
+(post-team-assignment) class identifier: two team colours for outfield
+players and resolved goalkeepers, a distinct colour for referees and
+unresolved goalkeepers, and a neutral colour for the ball. When an
+offside candidate has been flagged on a given frame, the offending player
+is recoloured and the relevant offside line is overlaid. The render is
+stateless: each frame is drawn from the current set of projected
+positions alone, without trails or accumulated history, which keeps the
+bird's-eye faithful to the instantaneous pitch state. The bird's-eye can
+be produced as a standalone video, as a component of a side-by-side
+composite with the broadcast, or both simultaneously.
+
+\paragraph{Tactical outputs and numerical exports.} The tactical analytics
+produce a set of quantitative outputs intended for post-hoc analysis
+rather than inline display. Per-player heatmaps capture occupation
+density in pitch space. Per-player movement summaries record distance
+covered and speed statistics over the sequence. A possession timeline
+records which team is in possession at each moment. Pass events and
+offside candidate frames are accumulated as event records. Each output is
+persisted in a structured, machine-readable form (CSV or JSON as
+appropriate to the shape of the data) so that the evaluation procedure
+can compare against ground-truth annotations without re-running the
+pipeline, and so that the outputs can be consumed by downstream tools
+outside the scope of this project.
+
+% \section{Datasets and Model Training}
+% \label{sec:datasets_model_training}
+
+% Three supervised models were trained for the system: a main object detection
+% model, a dedicated ball detection model, and a pitch keypoint detection model.
+% The main detector provides the player, goalkeeper, referee, and initial ball
+% detections used by the tracking pipeline. The dedicated ball detector is used
+% to improve ball localisation, while the pitch keypoint model provides the
+% landmarks required for homography estimation. Team identification does not use
+% a separately trained supervised model; instead, it is fitted at runtime using
+% player crops from the input video.
+
+% \subsection{Object Detection Dataset and Training}
+% \label{subsec:object_detection_dataset_training}
+
+% The main object detector was trained on the Roboflow
+% \texttt{football-updated-2024} dataset, version 2. This dataset contains four
+% classes: \textit{ball}, \textit{goalkeeper}, \textit{player}, and
+% \textit{referee}. The training split contained 618 images and the validation
+% split contained 75 images.
+
+% A YOLOv8m object detection model was fine-tuned on this dataset for 50 epochs.
+% The model was trained with an image size of 1280 pixels and a batch size of 4.
+% This model size was selected as a compromise between detection accuracy and
+% runtime cost, since the detector is executed throughout the full video
+% processing pipeline. The resulting model weights were saved as
+% \texttt{models/object\_detection/best.pt} and used as the main detector during
+% pipeline inference.
+
+% \subsection{Ball Detection Dataset and Training}
+% \label{subsec:ball_detection_dataset_training}
+
+% A separate ball detector was trained because the ball is substantially smaller
+% than the other object classes and is often affected by motion blur, occlusion,
+% or compression artefacts. In preliminary pipeline testing, relying only on the
+% ball class from the main detector produced missed detections that affected
+% possession, pass detection, and offside candidate generation. A dedicated model
+% therefore allowed the detection stage to be specialised for the most difficult
+% object in the scene.
+
+% The ball detector used a YOLOv8x architecture and was trained on a dedicated
+% Roboflow ball dataset. Training was run for 150 epochs with an image size of
+% 1280 pixels, a batch size of 8, patience of 30 epochs, and caching enabled. The
+% trained weights were saved as \texttt{models/ball\_detection/best.pt}. During
+% inference, this detector is used alongside the main detector, with additional
+% temporal filtering applied later in the pipeline to reject implausible ball
+% jumps.
+
+% \subsection{Pitch Keypoint Dataset and Training}
+% \label{subsec:pitch_keypoint_dataset_training}
+
+% Pitch registration requires correspondences between points in the broadcast
+% image and points on a canonical football pitch. To estimate these
+% correspondences automatically, a YOLOv8x-pose model was trained to detect 32
+% canonical pitch keypoints. The model was trained using the Roboflow
+% \texttt{football-field-detection} dataset, version 2, which contains one
+% \textit{pitch} class and 32 labelled keypoints. The training split contained
+% 255 images and the validation split contained 34 images.
+
+% The pitch keypoint model was trained for 500 epochs with an image size of 640
+% pixels and a batch size of 48. Mosaic augmentation was disabled because
+% geometric consistency between pitch markings is important for keypoint
+% localisation and homography estimation. The resulting model weights were saved
+% as \texttt{models/pitch\_keypoints/best.pt}. At inference time, predicted
+% keypoints are filtered by confidence before being used to estimate the
+% homography.
+
+% \subsection{Training Configuration}
+% \label{subsec:training_configuration}
+
+% All YOLO models were trained using the Ultralytics framework. The default
+% training configuration used automatic optimiser selection, an initial learning
+% rate of 0.01, final learning-rate fraction of 0.01, momentum of 0.937, weight
+% decay of 0.0005, warm-up for 3 epochs, automatic mixed precision, deterministic
+% training, and seed 0 where supported.
+
+% Table~\ref{tab:model_training_summary} summarises the supervised models used
+% in the system.
+
+% \begin{table}[ht]
+%     \centering
+%     \begin{tabular}{lllll}
+%         \toprule
+%         \textbf{Model} & \textbf{Architecture} & \textbf{Task} &
+%         \textbf{Epochs} & \textbf{Image size} \\
+%         \midrule
+%         Main detector & YOLOv8m & Player/GK/referee/ball detection &
+%         50 & 1280 \\
+%         Ball detector & YOLOv8x & Ball detection &
+%         150 & 1280 \\
+%         Pitch keypoints & YOLOv8x-pose & 32 pitch keypoints &
+%         500 & 640 \\
+%         \bottomrule
+%     \end{tabular}
+%     \caption{Summary of supervised models trained for the pipeline.}
+%     \label{tab:model_training_summary}
+% \end{table}
+
+% The trained weights are treated as external artefacts required for
+% reproducibility. They are stored separately from the source code and must either
+% be supplied with the project or regenerated using the documented training
+% scripts and notebooks. Model-level validation results are reported in
+% Chapter~\ref{ch:results}, while the effect of these models on the full pipeline
+% is evaluated in Chapter~\ref{ch:evaluation}.
 
 \section{Datasets and Model Training}
-\label{sec:datasets_model_training}
+\label{sec:datasets_training}
 
-Three supervised models were trained for the system: a main object detection
-model, a dedicated ball detection model, and a pitch keypoint detection model.
-The main detector provides the player, goalkeeper, referee, and initial ball
-detections used by the tracking pipeline. The dedicated ball detector is used
-to improve ball localisation, while the pitch keypoint model provides the
-landmarks required for homography estimation. Team identification does not use
-a separately trained supervised model; instead, it is fitted at runtime using
-player crops from the input video.
+Three bespoke models are used in the pipeline: a generic object detector
+for outfield actors, a dedicated ball detector, and a pitch keypoint
+detector. Each was trained on a Roboflow-hosted dataset of broadcast
+football imagery, using the Ultralytics training harness with variants of
+the YOLOv8 architecture. This section describes the datasets
+(\S\ref{subsec:datasets}) and the training procedure for each model
+(\S\ref{subsec:train_generic}, \S\ref{subsec:train_ball},
+\S\ref{subsec:train_keypoints}). Results on held-out training splits are
+reported alongside the pipeline stage that consumes each model, where
+they inform the design discussion directly; full pipeline-level
+evaluation appears in Chapter~\ref{ch:evaluation}. A fourth model used by
+the pipeline---the SigLIP vision--language encoder consumed by the team
+identification stage---is used off-the-shelf without fine-tuning and is
+described in Section~\ref{sec:team_identification} rather than here.
 
-\subsection{Object Detection Dataset and Training}
-\label{subsec:object_detection_dataset_training}
+\subsection{Datasets}
+\label{subsec:datasets}
 
-The main object detector was trained on the Roboflow
-\texttt{football-updated-2024} dataset, version 2. This dataset contains four
-classes: \textit{ball}, \textit{goalkeeper}, \textit{player}, and
-\textit{referee}. The training split contained 618 images and the validation
-split contained 75 images.
+All three training datasets were curated under a single Roboflow Universe
+workspace, were downloaded via the Roboflow Python SDK into the training
+environment, and were exported in YOLO format with the standard
+train/validation/test splits handled by Roboflow's dataset versioning.
+Table~\ref{tab:datasets_summary} summarises the three datasets.
 
-A YOLOv8m object detection model was fine-tuned on this dataset for 50 epochs.
-The model was trained with an image size of 1280 pixels and a batch size of 4.
-This model size was selected as a compromise between detection accuracy and
-runtime cost, since the detector is executed throughout the full video
-processing pipeline. The resulting model weights were saved as
-\texttt{models/object\_detection/best.pt} and used as the main detector during
-pipeline inference.
-
-\subsection{Ball Detection Dataset and Training}
-\label{subsec:ball_detection_dataset_training}
-
-A separate ball detector was trained because the ball is substantially smaller
-than the other object classes and is often affected by motion blur, occlusion,
-or compression artefacts. In preliminary pipeline testing, relying only on the
-ball class from the main detector produced missed detections that affected
-possession, pass detection, and offside candidate generation. A dedicated model
-therefore allowed the detection stage to be specialised for the most difficult
-object in the scene.
-
-The ball detector used a YOLOv8x architecture and was trained on a dedicated
-Roboflow ball dataset. Training was run for 150 epochs with an image size of
-1280 pixels, a batch size of 8, patience of 30 epochs, and caching enabled. The
-trained weights were saved as \texttt{models/ball\_detection/best.pt}. During
-inference, this detector is used alongside the main detector, with additional
-temporal filtering applied later in the pipeline to reject implausible ball
-jumps.
-
-\subsection{Pitch Keypoint Dataset and Training}
-\label{subsec:pitch_keypoint_dataset_training}
-
-Pitch registration requires correspondences between points in the broadcast
-image and points on a canonical football pitch. To estimate these
-correspondences automatically, a YOLOv8x-pose model was trained to detect 32
-canonical pitch keypoints. The model was trained using the Roboflow
-\texttt{football-field-detection} dataset, version 2, which contains one
-\textit{pitch} class and 32 labelled keypoints. The training split contained
-255 images and the validation split contained 34 images.
-
-The pitch keypoint model was trained for 500 epochs with an image size of 640
-pixels and a batch size of 48. Mosaic augmentation was disabled because
-geometric consistency between pitch markings is important for keypoint
-localisation and homography estimation. The resulting model weights were saved
-as \texttt{models/pitch\_keypoints/best.pt}. At inference time, predicted
-keypoints are filtered by confidence before being used to estimate the
-homography.
-
-\subsection{Training Configuration}
-\label{subsec:training_configuration}
-
-All YOLO models were trained using the Ultralytics framework. The default
-training configuration used automatic optimiser selection, an initial learning
-rate of 0.01, final learning-rate fraction of 0.01, momentum of 0.937, weight
-decay of 0.0005, warm-up for 3 epochs, automatic mixed precision, deterministic
-training, and seed 0 where supported.
-
-Table~\ref{tab:model_training_summary} summarises the supervised models used
-in the system.
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lllll}
-        \toprule
-        \textbf{Model} & \textbf{Architecture} & \textbf{Task} &
-        \textbf{Epochs} & \textbf{Image size} \\
-        \midrule
-        Main detector & YOLOv8m & Player/GK/referee/ball detection &
-        50 & 1280 \\
-        Ball detector & YOLOv8x & Ball detection &
-        150 & 1280 \\
-        Pitch keypoints & YOLOv8x-pose & 32 pitch keypoints &
-        500 & 640 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Summary of supervised models trained for the pipeline.}
-    \label{tab:model_training_summary}
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l X r r r@{}}
+    \toprule
+    \textbf{Model} & \textbf{Classes} & \textbf{Train} & \textbf{Val} & \textbf{Test} \\
+    \midrule
+    Generic detector & ball, goalkeeper, player, referee & 618 & 75 & 75 \\
+    Ball detector    & ball (single class) & 932 & 114 & 119 \\
+    Pitch keypoints  & pitch ($+$ 32 keypoints) & $\sim$290 & 34 & 28 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{Summary of the three training datasets. All datasets are
+  hosted on Roboflow Universe and were downloaded via the Roboflow
+  Python SDK; splits are those provided by the dataset version on
+  Roboflow.}
+  \label{tab:datasets_summary}
 \end{table}
 
-The trained weights are treated as external artefacts required for
-reproducibility. They are stored separately from the source code and must either
-be supplied with the project or regenerated using the documented training
-scripts and notebooks. Model-level validation results are reported in
-Chapter~\ref{ch:results}, while the effect of these models on the full pipeline
-is evaluated in Chapter~\ref{ch:evaluation}.
+\paragraph{Generic detector dataset.} The generic detector was trained on
+a Roboflow-hosted dataset of broadcast football frames curated
+collaboratively as a shared resource for broadcast football analysis, to
+which the author contributed additional annotations of frames sourced
+from a publicly available broadcast football dataset hosted on Kaggle.
+The resulting dataset contains 768 annotated frames split 618/75/75 for
+training, validation, and test, and carries the four classes required by
+this work: \emph{ball}, \emph{goalkeeper}, \emph{player}, and
+\emph{referee}. The class distribution is heavily imbalanced: the
+\emph{player} class accounts for the great majority of annotations,
+while goalkeepers, referees, and the ball each appear at most once per
+frame and sometimes not at all. This imbalance motivates the use of a
+separate, single-class dataset for the ball, described next.
+
+\paragraph{Ball detector dataset.} The dedicated ball detector was trained
+on a separate Roboflow-hosted dataset built specifically for small-object
+detection of the ball against broadcast backgrounds. It contains 1,165
+annotated frames split 932/114/119 for training, validation, and test,
+with a single \emph{ball} class; the Ultralytics log records the model's
+class head being overridden from 80 to 1 on initialisation. Sourcing a
+ball-only dataset rather than extracting ball annotations from the
+generic dataset yields a substantially larger pool of positive examples
+(932 versus 618 frames) and permits augmentation, input resolution, and
+loss weighting to be tuned for a single small-object class without
+having to balance against the needs of the outfield classes.
+
+\paragraph{Pitch keypoint dataset.} The pitch keypoint model was trained
+on a Roboflow-hosted dataset of broadcast football frames annotated with
+32 canonical pitch landmarks together with a pitch bounding box. The
+dataset is comparatively small (approximately 290 training frames, 34
+validation, 28 test). Two factors make this size acceptable: keypoint
+annotation is considerably more labour-intensive than bounding-box
+annotation, and the geometric regularity of a football
+pitch---fixed markings at fixed distances---means that a relatively
+small dataset can cover the space of camera viewpoints encountered in
+broadcast footage. The keypoint layout defines a horizontal-flip
+symmetry (\texttt{flip\_idx}) so that horizontal augmentation can be
+applied without destroying left--right keypoint identities.
+
+\subsection{Generic Object Detector Training}
+\label{subsec:train_generic}
+
+The generic detector was initialised from the pretrained
+\texttt{yolov8m.pt} checkpoint and fine-tuned for 50 epochs on the
+four-class dataset. Training was run on a Tesla~T4 GPU in a Google Colab
+environment, at an input resolution of $1280 \times 1280$ to preserve
+fine detail on small or distant players, with a batch size of 4
+constrained by GPU memory at that resolution. The Ultralytics
+\texttt{auto} optimiser selected AdamW with default learning-rate
+schedules. Augmentation settings were the Ultralytics defaults for a
+detection task (HSV jitter, mosaic, horizontal flip, random erasing, and
+RandAugment), with rotation, shear, and perspective augmentation
+disabled as inappropriate for a broadcast view with a largely fixed
+horizon.
+
+\paragraph{Artefact retention.} The final weights from this run were
+deployed to Roboflow for downstream use and retrieved from that
+deployment for pipeline inference. The per-epoch \texttt{results.csv}
+from the training run was not preserved in the project repository, so
+loss and mAP trajectories over training cannot be reconstructed. The
+final validation and test summaries emitted at the end of training are
+retained in the training notebook and are reported in
+\S\ref{sec:detection_tracking}, where they inform the design choice of
+treating the ball as a separate detection stream. This is a reproducibility
+limitation that the remaining two training runs, reported below, avoid.
+
+\section{Small-Object Detection and Dedicated Ball Detection}
+\label{sec:background_ball_detection}
+ 
+Although the ball is the primary object of interest in football, it is also
+the hardest to detect reliably in broadcast footage. At typical broadcast
+resolution, the ball subtends only a few dozen pixels in diameter, moves
+rapidly enough to produce motion blur, and is frequently occluded by players
+or absent from the frame entirely~\cite{Gualtieri2023}. These properties
+place it firmly in the small-object detection regime, where standard
+detectors trained jointly on all classes tend to underperform because larger,
+more visually prominent objects dominate the training
+signal~\cite{Theiner2022}.
+ 
+ 
+\subsection{Why Small Objects Are Harder to Detect}
+\label{subsec:background_small_object_difficulty}
+ 
+The COCO benchmark defines a small object as one whose bounding box occupies
+fewer than $32 \times 32$ pixels~\cite{lin2014microsoft}. By this standard,
+the ball in a wide-angle broadcast frame is consistently small, often below
+$20 \times 20$ pixels depending on camera zoom.
+ 
+Small-object detection is inherently harder for two reasons. First, the IoU
+criterion (Equation~\eqref{eq:iou}) becomes disproportionately sensitive to
+localisation error at small scales: a fixed pixel displacement $\delta$
+produces a much larger IoU drop on a small box than on a large one. As shown
+in Figure~\ref{fig:iou_degradation}, a 2-pixel shift reduces IoU from 1.0 to
+0.78 on a $16 \times 16$ box but only to 0.94 on a $64 \times 64$ box. This
+makes ball detection acutely sensitive to blur, noise, and detector
+uncertainty. Second, in convolutional architectures the spatial resolution of
+feature maps decreases with depth; by the deepest layers, small objects may
+occupy only a single cell or be lost entirely. The FPN neck described in
+Section~\ref{subsec:background_yolo} partially mitigates this, but the
+representation of very small objects remains inherently weaker than that of
+larger ones~\cite{lin2017feature}.
+ 
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.75\linewidth]{images/iou_degradation.png}
+    \caption{Effect of pixel displacement $\delta$ on IoU for square
+        bounding boxes of varying size. A single-axis shift is applied to
+        the predicted box while the ground-truth box remains fixed. At
+        $\delta = 2$ pixels, a $16 \times 16$ box drops to
+        $\mathrm{IoU} = 0.78$ while a $64 \times 64$ box retains
+        $\mathrm{IoU} = 0.94$, illustrating why small-object detection is
+        disproportionately sensitive to localisation error. The dashed line
+        marks the standard $\mathrm{mAP}_{50}$ threshold.}
+    \label{fig:iou_degradation}
+\end{figure}
+ 
+ 
+\subsection{Strategies for Small-Object Detection}
+\label{subsec:background_small_object_strategies}
+ 
+Several strategies have been proposed to address these difficulties.
+Multi-scale detection heads, as used in FPN-based architectures, are the most
+widely adopted architectural response; some methods extend this with
+additional high-resolution prediction scales or dilated
+convolutions~\cite{lin2017feature}. At the data level, augmentation
+techniques such as copy-pasting small object instances into new training
+locations improve recall on under-represented size
+categories~\cite{kisantal2019augmentation}, while inference-time tiling
+increases effective resolution at the cost of higher computation.
+ 
+A complementary approach is to train a dedicated detector whose capacity,
+input resolution, and confidence thresholds are tuned specifically for the
+small-object class. This avoids the class-imbalance problem inherent in
+joint training and allows the operating point to be optimised independently.
+In particular, operating at a low confidence threshold $\tau$ maximises
+recall at the cost of increased false positives — a trade-off that can be
+managed by downstream temporal filtering rather than within the detector
+itself~\cite{Gualtieri2023}.
+ 
+ 
+\subsection{Temporal Filtering of Ball Candidates}
+\label{subsec:background_temporal_filtering}
+ 
+When a detector operates at a low confidence threshold, the resulting
+candidate set at each frame contains both the true ball and spurious
+detections. The general form of this set at frame $t$ is
+\begin{equation}
+    C_t = \left\{\bigl(\mathbf{b}_t^{(j)},\, s_t^{(j)}
+           \bigr)\right\}_{j=1}^{N_t},
+    \label{eq:ball_candidates}
+\end{equation}
+where $\mathbf{b}_t^{(j)}$ is a candidate location and $s_t^{(j)}$ its
+confidence score.
+ 
+Temporal coherence provides a principled basis for disambiguation. Because
+the ball follows a physically continuous trajectory, its inter-frame
+displacement is bounded even under rapid motion. Two families of filtering
+exploit this property. Motion-model approaches, such as the Kalman filter
+described in Section~\ref{subsec:background_tracking_by_detection}, predict
+the ball's next position using an explicit dynamical model and select the
+closest candidate. These are effective when the assumed model holds, but can
+diverge under the abrupt accelerations from kicks, deflections, and rebounds
+that are routine in football. An alternative family enforces only that
+inter-frame displacement remains below a physically plausible bound,
+discarding candidates that would imply impossible ball speeds regardless of
+confidence. This sacrifices predictive power during smooth motion but is more
+robust to the sharp trajectory changes characteristic of ball dynamics.
+ 
+The choice between these families, and the specific instantiation used in
+this project, is discussed in Chapter~\ref{ch:methodology}.
+Chapter~\ref{ch:evaluation} reports ball detection performance separately
+from the general object detector.
+
+\subsection{Dedicated Ball Detector Training}
+\label{subsec:train_ball}
+
+The dedicated ball detector was initialised from the pretrained
+\texttt{yolov8x.pt} checkpoint and fine-tuned for 150 epochs at input
+resolution $1280 \times 1280$, with a batch size of 8, early-stopping
+patience of 30 epochs, and the Ultralytics \texttt{auto} optimiser
+resolving to AdamW with a learning rate of $2 \times 10^{-3}$.
+Augmentation settings mirrored those used for the generic detector,
+with \texttt{mixup} and \texttt{copy\_paste} disabled. Training was
+carried out on an NVIDIA~A100-80GB GPU on the University of Manchester
+CSF3 HPC facility, with mixed-precision (AMP) enabled throughout, and
+the full run took approximately 109 minutes of wall-clock time. The
+full training log and per-epoch \texttt{results.csv} are retained under
+\texttt{artifacts/ball\_detection\_model\_yolov8-x/}, allowing the
+training curves to be reproduced exactly.
+
+\paragraph{Choice of the larger variant.} The ball detector uses the
+\texttt{yolov8x} variant (68.1\,M parameters) rather than the
+\texttt{yolov8m} variant used for the generic detector. The motivation
+is that the ball is a small, fast-moving object whose appearance offers
+very little discriminative signal per pixel, and a higher-capacity
+backbone is better able to extract useful features from the few pixels
+on target. Because the dedicated detector runs only once per frame on
+the same input as the generic detector, and because the ball pipeline
+does not participate in per-frame tracking, the additional inference
+cost of the larger variant is acceptable within the overall runtime
+budget.
+
+\subsection{Pitch Keypoint Detector Training}
+\label{subsec:train_keypoints}
+
+The pitch keypoint model was initialised from the pretrained
+\texttt{yolov8x-pose.pt} checkpoint and fine-tuned for 500 epochs at
+input resolution $640 \times 640$, with a batch size of 48, early-stopping
+patience of 100 epochs, and the Ultralytics \texttt{auto} optimiser.
+Training was carried out on an NVIDIA~A100-40GB GPU in a Google Colab
+environment, with mixed-precision enabled throughout, and the full run
+took approximately 45 minutes of wall-clock time. The full training log
+and per-epoch \texttt{results.csv} are retained under
+\texttt{artifacts/pitch\_keypoint\_detection\_model/}.
+
+\paragraph{Mosaic disabled for keypoint training.} One departure from the
+default augmentation used elsewhere is that mosaic augmentation was
+explicitly disabled. Mosaic composes four images into a single training
+image by tiling; for bounding-box detection this is helpful (it
+increases the number of objects seen per batch and encourages
+context-invariance), but for keypoint tasks the tiling disrupts the
+geometric relationships between keypoints that the model must learn,
+since keypoints near the tile boundaries may be cropped or relocated in
+ways that do not correspond to any real camera viewpoint. Horizontal
+flip was retained because the keypoint layout defines an explicit
+left--right symmetry via \texttt{flip\_idx}; vertical flip and
+perspective augmentation were disabled for the same geometric-integrity
+reasons.
+
+\paragraph{Deployment path.} The trained weights were exported and
+deployed to Roboflow for hosted inference, and the pipeline consumes the
+keypoint model through Roboflow's hosted inference API rather than
+loading the local weights directly. The rationale for this deployment
+choice is explained in Section~\ref{sec:pitch_registration}, which
+discusses the pitch registration stage that consumes this model's
+output.
 
 \section{Detection and Tracking}
 \label{sec:detection_tracking}
