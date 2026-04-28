@@ -230,7 +230,7 @@ construction. Figure~\ref{fig:cnn-architecture} illustrates this structure.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\linewidth]{images/cnn_architecture.png}
+    \includegraphics[width=0.95\linewidth]{images/02-background/cnn_architecture.png}
     \caption{A common CNN architecture: stacked convolution, 
     activation, and pooling stages produce feature maps of 
     decreasing spatial resolution, which are passed to fully 
@@ -324,7 +324,7 @@ threshold and the predicted class is correct~\cite{lin2014microsoft}.
 
 \begin{figure}[!htbp]
     \centering
-    \includegraphics[width=0.72\linewidth]{images/iou.png}
+    \includegraphics[width=0.72\linewidth]{images/02-background/iou.png}
     \caption{Intersection over Union (IoU) between a ground-truth bounding
         box $B_g$ (blue, dashed) and a predicted bounding box $B_p$ (orange).
         IoU is the ratio of the intersection area (gold) to the
@@ -357,14 +357,14 @@ downstream.
     \centering
     \begin{subfigure}[t]{0.47\linewidth}
         \centering
-        \includegraphics[width=\linewidth]{images/nms_before.png}
+        \includegraphics[width=\linewidth]{images/02-background/nms_before.png}
         \caption{Before NMS}
         \label{fig:nms_before}
     \end{subfigure}
     \hfill
     \begin{subfigure}[t]{0.47\linewidth}
         \centering
-        \includegraphics[width=\linewidth]{images/nms_after.png}
+        \includegraphics[width=\linewidth]{images/02-background/nms_after.png}
         \caption{After NMS}
         \label{fig:nms_after}
     \end{subfigure}
@@ -458,7 +458,7 @@ the final detection set.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=\linewidth]{images/yolo_architecture_conceptual.png}
+    \includegraphics[width=\linewidth]{images/02-background/yolo_architecture_conceptual.png}
     \caption{Generalised YOLO-style single-stage detection 
     pipeline. The backbone extracts multi-scale feature 
     maps, the neck fuses them, and the detection head 
@@ -675,7 +675,7 @@ associations to high-confidence evidence.
 
 \begin{figure}[!htbp]
     \centering
-    \includegraphics[width=0.9\linewidth]{images/bytetrack_two_stage_association.png}
+    \includegraphics[width=0.9\linewidth]{images/02-background/bytetrack_two_stage_association.png}
     \caption{ByteTrack two-stage association process. Detector output is
         partitioned by confidence threshold $\tau_{\mathrm{high}}$ into a
         high-score set $D_t^{\mathrm{high}}$ and a low-score set
