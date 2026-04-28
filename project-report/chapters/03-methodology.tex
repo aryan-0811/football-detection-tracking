@@ -1627,731 +1627,1678 @@
 % then evaluates these results against the requirements and success criteria
 % defined in this chapter.
 
+
+% -----------------------------------------------------------------------------------------------------------------------------------------------
+% \chapter{Methodology and Implementation}
+% \label{ch:methodology}
+
+% This chapter describes the design and implementation of the 
+% broadcast football analysis pipeline introduced in 
+% Chapter~\ref{ch:introduction} and grounded in the theory of 
+% Chapter~\ref{ch:background}. The chapter is organised to 
+% mirror the data flow through the system: each section 
+% corresponds to one processing stage \(f_k\) of the composed 
+% pipeline \(y = f_n(\dots f_1(x))\) introduced in 
+% Equation~\ref{eq:pipeline_composition}, and the same notation 
+% is reused throughout. The discussion concentrates on the 
+% design decisions that distinguish this implementation, the 
+% engineering required to integrate the components, and the 
+% rationale for each non-obvious choice. Empirical justification 
+% of these decisions, including comparison against the success 
+% criteria stated in Section~\ref{sec:aims}, is presented in 
+% Chapter~\ref{ch:evaluation}.
+
+% \section{System Overview}
+% \label{sec:methodology_overview}
+
+% The pipeline ingests a broadcast football video and emits four 
+% classes of output: an annotated MP4 with bounding boxes, team 
+% labels, track identifiers, and offside indicators; a 
+% bird's-eye-view MP4 in pitch-space coordinates; per-track 
+% heatmap PNGs; and JSON logs of detected pass and offside 
+% events together with per-player match statistics. Internally, 
+% processing decomposes into three parallel branches that 
+% converge into a shared pitch-space representation, illustrated 
+% in Figure~\ref{fig:pipeline_overview}.
+
+% \begin{figure}[!htbp]
+%     \centering
+%     \includegraphics[width=\linewidth]{images/pipeline_overview.png}
+%     \caption{Pipeline architecture. Three parallel branches 
+%     process each frame: a generic object detector with 
+%     multi-object tracker producing per-frame player and 
+%     referee detections that are then assigned to teams 
+%     (left); a dedicated ball detector with a temporal 
+%     coherence filter (centre); and a pitch keypoint detector 
+%     whose outputs are used to estimate a per-frame homography 
+%     by Direct Linear Transform (right). The three branches 
+%     converge into a shared pitch-space representation, on 
+%     which all spatial analytics — heatmaps, speed and 
+%     distance, possession, passes, and offside — are computed.}
+%     \label{fig:pipeline_overview}
+% \end{figure}
+
+% The first branch handles outfield entities. A YOLO detector 
+% trained for four classes — ball, goalkeeper, player, and 
+% referee — produces per-frame bounding boxes, which are 
+% associated across frames by a multi-object tracker. The 
+% ball-class outputs from this generic detector are discarded 
+% in favour of a dedicated ball model, for reasons developed in 
+% Section~\ref{sec:methodology_detection}. The remaining player 
+% and goalkeeper detections are assigned to one of two team 
+% clusters by the team-classification module described in 
+% Section~\ref{sec:methodology_team}, and goalkeeper team 
+% identity is then resolved by a separate spatial heuristic 
+% because a 2-cluster model cannot reliably handle goalkeepers 
+% who wear kits visually distinct from both outfield teams.
+
+% The second branch is the dedicated ball detection pathway. A 
+% separate single-class YOLO model is run on each frame, 
+% followed by a temporal coherence filter that selects the most 
+% plausible ball detection given the previous frame's ball 
+% position. The structural reason for treating ball detection 
+% as a separate model — small object size combined with severe 
+% class imbalance in the multi-class dataset — is presented 
+% quantitatively in Section~\ref{sec:methodology_detection}.
+
+% The third branch recovers the geometric mapping between 
+% image coordinates and pitch coordinates. A YOLO-pose model, 
+% trained for landmark localisation rather than human pose, 
+% identifies up to 32 pre-defined points on the playing surface 
+% — line intersections, penalty-area corners, centre-circle 
+% tangencies, and other distinctive features formed by pitch 
+% markings. These correspondences feed a Direct Linear 
+% Transform homography estimator, with stride-based caching to 
+% amortise the inference cost of the keypoint model across 
+% consecutive frames. This branch is described in 
+% Section~\ref{sec:methodology_pitch}.
+
+% The three branches converge at the pitch-space projection 
+% step. Each player's bottom-centre image-space anchor and the 
+% ball's position are mapped to pitch coordinates through the 
+% cached homography, in line with the ground-plane validity 
+% argument of Section~\ref{subsec:background_player_projection}. 
+% All downstream analytics — bird's-eye visualisation, per-track 
+% heatmaps, speed and distance estimation, possession and pass 
+% detection, and offside reasoning — operate on these 
+% pitch-space positions rather than on image coordinates. These 
+% analytics are detailed in Section~\ref{sec:methodology_tactical}.
+
+% A separate \emph{warmup phase} runs once at the start of each 
+% video. This phase samples player crops from the first 
+% \(W = 20\) seconds of footage, extracts visual embeddings 
+% through the team-classification module, and fits the 
+% unsupervised SigLIP--UMAP--KMeans clustering pipeline 
+% introduced in Section~\ref{subsec:team_id_kmeans}. Warmup is 
+% conceptually outside the per-frame loop but operates on the 
+% same input video, so the entire pipeline produces team 
+% labels without any per-match labelling effort — directly 
+% addressing the third project objective in 
+% Section~\ref{sec:aims}. The warmup design and its 
+% contributions are detailed in 
+% Section~\ref{sec:methodology_team}.
+
+% The remainder of this chapter discusses each module in the 
+% order suggested by Figure~\ref{fig:pipeline_overview}: object 
+% and ball detection (Section~\ref{sec:methodology_detection}), 
+% multi-object tracking 
+% (Section~\ref{sec:methodology_tracking}), team classification 
+% (Section~\ref{sec:methodology_team}), pitch registration 
+% (Section~\ref{sec:methodology_pitch}), tactical reasoning 
+% (Section~\ref{sec:methodology_tactical}), and the 
+% system-level engineering that ties the modules together 
+% (Section~\ref{sec:methodology_system}).
+
 \chapter{Methodology and Implementation}
 \label{ch:methodology}
 
-This chapter describes the design and implementation of the 
-broadcast football analysis pipeline introduced in 
-Chapter~\ref{ch:introduction} and grounded in the theory of 
-Chapter~\ref{ch:background}. The chapter is organised to 
-mirror the data flow through the system: each section 
-corresponds to one processing stage \(f_k\) of the composed 
-pipeline \(y = f_n(\dots f_1(x))\) introduced in 
-Equation~\ref{eq:pipeline_composition}, and the same notation 
-is reused throughout. The discussion concentrates on the 
-design decisions that distinguish this implementation, the 
-engineering required to integrate the components, and the 
-rationale for each non-obvious choice. Empirical justification 
-of these decisions, including comparison against the success 
-criteria stated in Section~\ref{sec:aims}, is presented in 
-Chapter~\ref{ch:evaluation}.
+This chapter describes the design and implementation of the broadcast football
+analysis pipeline introduced in Chapter~\ref{ch:introduction} and grounded in the
+theory of Chapter~\ref{ch:background}. Sections are organised to mirror the data
+flow through the system: each section corresponds to one processing stage
+\(f_k\) of the composed pipeline \(y = f_n(\dots f_1(x))\) of
+Equation~\ref{eq:pipeline_composition}, with the same notation reused throughout.
+Empirical evaluation against the success criteria of Section~\ref{sec:aims} is
+deferred to Chapter~\ref{ch:evaluation}.
 
 \section{System Overview}
 \label{sec:methodology_overview}
 
-The pipeline ingests a broadcast football video and emits four 
-classes of output: an annotated MP4 with bounding boxes, team 
-labels, track identifiers, and offside indicators; a 
-bird's-eye-view MP4 in pitch-space coordinates; per-track 
-heatmap PNGs; and JSON logs of detected pass and offside 
-events together with per-player match statistics. Internally, 
-processing decomposes into three parallel branches that 
-converge into a shared pitch-space representation, illustrated 
-in Figure~\ref{fig:pipeline_overview}.
+The pipeline ingests a broadcast football video and emits four output classes:
+an annotated MP4 with bounding boxes, team labels, track identifiers, and
+offside indicators; a bird's-eye-view MP4 in pitch-space coordinates; per-track
+heatmap PNGs; and JSON logs of pass and offside events together with per-player
+match statistics. Internally, processing decomposes into three parallel branches
+that converge at a shared pitch-space representation, illustrated in
+Figure~\ref{fig:pipeline_overview}.
 
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=\linewidth]{images/pipeline_overview.png}
-    \caption{Pipeline architecture. Three parallel branches 
-    process each frame: a generic object detector with 
-    multi-object tracker producing per-frame player and 
-    referee detections that are then assigned to teams 
-    (left); a dedicated ball detector with a temporal 
-    coherence filter (centre); and a pitch keypoint detector 
-    whose outputs are used to estimate a per-frame homography 
-    by Direct Linear Transform (right). The three branches 
-    converge into a shared pitch-space representation, on 
-    which all spatial analytics — heatmaps, speed and 
-    distance, possession, passes, and offside — are computed.}
+    \caption{Pipeline architecture. Three parallel branches process each frame:
+    a generic object detector with multi-object tracker producing per-frame
+    player and referee detections that are then assigned to teams (left); a
+    dedicated ball detector with a temporal coherence filter (centre); and a
+    pitch keypoint detector whose outputs are used to estimate a per-frame
+    homography by Direct Linear Transform (right). The three branches converge
+    at a shared pitch-space representation, on which all spatial analytics ---
+    heatmaps, speed and distance, possession, passes, and offside --- are
+    computed.}
     \label{fig:pipeline_overview}
 \end{figure}
 
-The first branch handles outfield entities. A YOLO detector 
-trained for four classes — ball, goalkeeper, player, and 
-referee — produces per-frame bounding boxes, which are 
-associated across frames by a multi-object tracker. The 
-ball-class outputs from this generic detector are discarded 
-in favour of a dedicated ball model, for reasons developed in 
-Section~\ref{sec:methodology_detection}. The remaining player 
-and goalkeeper detections are assigned to one of two team 
-clusters by the team-classification module described in 
-Section~\ref{sec:methodology_team}, and goalkeeper team 
-identity is then resolved by a separate spatial heuristic 
-because a 2-cluster model cannot reliably handle goalkeepers 
-who wear kits visually distinct from both outfield teams.
+Three design decisions distinguish this architecture from a single-detector
+baseline. First, the ball-class outputs of the generic detector are discarded
+in favour of a dedicated single-class ball model, motivated by the per-class
+imbalance and small-object difficulty quantified in
+Section~\ref{sec:methodology_detection}. Second, goalkeeper team identity is
+resolved by a spatial heuristic rather than by the unsupervised clusterer,
+because goalkeeper kits are required by competition rules to be visually
+distinct from both outfield kits, and a two-cluster model therefore cannot
+place them reliably (Section~\ref{sec:methodology_team}). Third, pitch keypoint
+inference is the slowest stage of the pipeline; it is run only every fifteen
+frames and the resulting homography is cached, exploiting the slow camera
+motion characteristic of broadcast football
+(Section~\ref{sec:methodology_pitch}).
 
-The second branch is the dedicated ball detection pathway. A 
-separate single-class YOLO model is run on each frame, 
-followed by a temporal coherence filter that selects the most 
-plausible ball detection given the previous frame's ball 
-position. The structural reason for treating ball detection 
-as a separate model — small object size combined with severe 
-class imbalance in the multi-class dataset — is presented 
-quantitatively in Section~\ref{sec:methodology_detection}.
+The three branches converge at the pitch-space projection step, where each
+player's bottom-centre image-space anchor and the ball's position are mapped
+through the cached homography in line with the ground-plane validity argument
+of Section~\ref{subsec:background_player_projection}. All downstream
+analytics operate on these pitch-space positions and are detailed in
+Section~\ref{sec:methodology_tactical}.
 
-The third branch recovers the geometric mapping between 
-image coordinates and pitch coordinates. A YOLO-pose model, 
-trained for landmark localisation rather than human pose, 
-identifies up to 32 pre-defined points on the playing surface 
-— line intersections, penalty-area corners, centre-circle 
-tangencies, and other distinctive features formed by pitch 
-markings. These correspondences feed a Direct Linear 
-Transform homography estimator, with stride-based caching to 
-amortise the inference cost of the keypoint model across 
-consecutive frames. This branch is described in 
-Section~\ref{sec:methodology_pitch}.
+A separate \emph{warmup phase} runs once at the start of each video, fitting
+the unsupervised SigLIP--UMAP--KMeans clustering of
+Section~\ref{subsec:team_id_kmeans} on player crops sampled from the first
+twenty seconds of footage. Warmup is conceptually outside the per-frame loop
+but operates on the same input video, so the entire pipeline produces team
+labels without per-match labelling effort, directly addressing the third
+project objective of Section~\ref{sec:aims}.
 
-The three branches converge at the pitch-space projection 
-step. Each player's bottom-centre image-space anchor and the 
-ball's position are mapped to pitch coordinates through the 
-cached homography, in line with the ground-plane validity 
-argument of Section~\ref{subsec:background_player_projection}. 
-All downstream analytics — bird's-eye visualisation, per-track 
-heatmaps, speed and distance estimation, possession and pass 
-detection, and offside reasoning — operate on these 
-pitch-space positions rather than on image coordinates. These 
-analytics are detailed in Section~\ref{sec:methodology_tactical}.
+Table~\ref{tab:pipeline_representations} records the intermediate
+representations passed between modules, with each representation labelled by
+the section in which its producer is defined. The remainder of this chapter
+follows the order of Figure~\ref{fig:pipeline_overview}.
 
-A separate \emph{warmup phase} runs once at the start of each 
-video. This phase samples player crops from the first 
-\(W = 20\) seconds of footage, extracts visual embeddings 
-through the team-classification module, and fits the 
-unsupervised SigLIP--UMAP--KMeans clustering pipeline 
-introduced in Section~\ref{subsec:team_id_kmeans}. Warmup is 
-conceptually outside the per-frame loop but operates on the 
-same input video, so the entire pipeline produces team 
-labels without any per-match labelling effort — directly 
-addressing the third project objective in 
-Section~\ref{sec:aims}. The warmup design and its 
-contributions are detailed in 
-Section~\ref{sec:methodology_team}.
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{p{0.5cm}p{3.0cm}p{3.4cm}p{3.4cm}p{3.4cm}}
+\toprule
+\textbf{\#} & \textbf{Representation} & \textbf{Contents} & \textbf{Produced by} & \textbf{Consumed by} \\
+\midrule
+1 & Raw detection            & bbox, class, confidence                          & Generic YOLO detector (§\ref{sec:methodology_detection})       & Tracker; ball filter \\
+2 & Track                    & bbox, class, conf, track ID                       & ByteTrack/BoT-SORT (§\ref{sec:methodology_tracking})           & Team classifier; projection \\
+3 & Filtered ball detection  & bbox, confidence                                  & Dedicated ball detector + temporal filter (§\ref{sec:methodology_detection}) & Possession tracker \\
+4 & Team-labelled track      & track ID, raw label, smoothed label               & \texttt{TeamAssigner} (§\ref{sec:methodology_team})            & Possession; offside; renderer \\
+5 & Pitch keypoints          & image-space coords + per-keypoint confidence      & YOLO-pose model (§\ref{sec:methodology_pitch})                 & Homography estimator \\
+6 & Homography               & $3 \times 3$ image-to-pitch transform             & DLT estimator (§\ref{sec:methodology_pitch})                   & ViewTransformer \\
+7 & Pitch-space position     & $(x, y)$ in centimetres on the pitch              & ViewTransformer (§\ref{sec:methodology_tactical})              & Heatmaps; speed; possession; offside \\
+8 & Event log                & passes, offsides, per-track statistics            & Tactical reasoning modules (§\ref{sec:methodology_tactical})   & JSON outputs; Ch.~\ref{ch:evaluation} \\
+\bottomrule
+\end{tabular}
+\caption{Intermediate representations passed between pipeline components,
+with the section defining each producer indicated in parentheses.}
+\label{tab:pipeline_representations}
+\end{table}
 
-The remainder of this chapter discusses each module in the 
-order suggested by Figure~\ref{fig:pipeline_overview}: object 
-and ball detection (Section~\ref{sec:methodology_detection}), 
-multi-object tracking 
-(Section~\ref{sec:methodology_tracking}), team classification 
-(Section~\ref{sec:methodology_team}), pitch registration 
-(Section~\ref{sec:methodology_pitch}), tactical reasoning 
-(Section~\ref{sec:methodology_tactical}), and the 
-system-level engineering that ties the modules together 
-(Section~\ref{sec:methodology_system}).
+\section{Requirements and Design Objectives}
+\label{sec:methodology_requirements}
+
+The aims and objectives of Chapter~\ref{ch:introduction} commit the system to
+six functional capabilities and an associated set of qualitative success
+criteria. Before describing the implementation it is useful to record these
+commitments in a more contractual form, as functional and non-functional
+requirements with explicit traceability to the originating objectives and to
+the implementation sections that deliver them. The full requirements set is
+given in Table~\ref{tab:methodology_requirements}; subsequent sections of this
+chapter return to the FR/NFR identifiers when describing how each requirement
+is met.
+
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{p{0.7cm}p{5.4cm}p{2.6cm}p{4.4cm}}
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Source} & \textbf{Implemented by} \\
+\midrule
+\multicolumn{4}{l}{\textit{Functional}} \\
+FR1 & Detect players, goalkeepers, referees, and the ball in broadcast football frames with mAP@50 $\geq$ 0.80. & Obj.~1; SC~(i) & Generic four-class detector and dedicated ball detector (§\ref{sec:methodology_detection}). \\
+FR2 & Maintain consistent player and referee identities across frames sufficient for downstream tactical analysis. & Obj.~2; SC~(ii) & Multi-object tracker with selectable algorithm (§\ref{sec:methodology_tracking}). \\
+FR3 & Assign each tracked player to a team without per-match manual labels. & Obj.~3; SC~(iii) & Unsupervised SigLIP--UMAP--KMeans clustering with track-level smoothing and a goalkeeper resolver (§\ref{sec:methodology_team}). \\
+FR4 & Project image-space detections into pitch-space coordinates with sufficient geometric accuracy to support spatial analytics. & Obj.~4 & YOLO-pose pitch keypoint detector and DLT-based homography estimator (§\ref{sec:methodology_pitch}). \\
+FR5 & Produce tactical outputs including possession, pass and offside events, per-player speed and distance, and positional heatmaps. & Obj.~5; SC~(iv) & Tactical reasoning modules operating in pitch-space (§\ref{sec:methodology_tactical}). \\
+FR6 & Operate end-to-end as an integrated pipeline on a complete broadcast clip without manual intervention. & Obj.~6 & Pipeline orchestration with two-phase execution and cached intermediates (§\ref{sec:methodology_system}). \\
+\midrule
+\multicolumn{4}{l}{\textit{Non-functional}} \\
+NFR1 & Components are independently replaceable without modifying unrelated modules. & Obj.~6 & Package layout under \texttt{src/}; configuration-file tracker selection (§\ref{sec:methodology_system}). \\
+NFR2 & The system is reproducible from documented model weights, datasets, hyperparameters, and configuration files. & Obj.~6 & Reproducibility documentation (§\ref{subsec:methodology_reproducibility}). \\
+NFR3 & Outputs support both human inspection and machine-readable downstream analysis. & Obj.~5 & MP4, PNG visualisations alongside NPY and JSON exports (§\ref{sec:methodology_system}). \\
+\bottomrule
+\end{tabular}
+\caption{Functional (FR) and non-functional (NFR) requirements, with the
+originating Chapter~\ref{ch:introduction} objective (Obj.) and success
+criterion (SC) where applicable, and the implementation section that delivers
+each requirement.}
+\label{tab:methodology_requirements}
+\end{table}
+
+\section{Development Methodology}
+\label{sec:development_methodology}
+
+The project followed a modular, iterative, component-wise development approach.
+Each processing stage in Figure~\ref{fig:pipeline_overview} was first
+implemented and inspected in isolation, with explicit input and output
+contracts as recorded in Table~\ref{tab:pipeline_representations}, before being
+integrated into the end-to-end loop. This was a deliberate choice driven by
+error propagation: tactical outputs depend on the cumulative correctness of
+detection, tracking, team assignment, and pitch registration, so an
+under-tested component would fail in ways that surface only at the analytics
+stage and would be difficult to attribute to its true source. Component
+isolation kept the failure surface small at each stage of development. End-to-end
+integration was performed only after each module had been independently verified.
+
+Design decisions for each component were informed first by the literature
+reviewed in Chapter~\ref{ch:background} and then checked empirically on a small
+set of held-out development clips. The architecture-level choices --- the
+two-detector split, the spatial goalkeeper resolver, the cached homography ---
+were arrived at through this loop: the literature established the available
+techniques and their known failure modes
+(Sections~\ref{sec:background_object_detection},
+\ref{sec:background_team_id}, and \ref{sec:background_homography}), and
+inspection of intermediate outputs on development footage exposed the
+specific failure modes that motivated each design departure. The empirical
+justifications appearing throughout this chapter (most prominently the
+per-class detection breakdown of Section~\ref{sec:methodology_detection}) are
+the diagnostic evidence collected during this development loop, separate from
+the final quantitative evaluation reported in Chapter~\ref{ch:evaluation}.
+
+Parameters governing component integration --- temporal windows for
+smoothing, confidence thresholds for filtering, displacement gates for
+plausibility checks --- were calibrated on the same development clips, with
+the goal of suppressing transient errors without rejecting plausible
+behaviour. They were not selected by formal hyperparameter search: the
+project's contribution is in the surrounding architecture and the
+component-level design decisions, not in fine-grained parameter tuning.
+Where a parameter is principled (for example, a sprinter-ceiling speed cap or
+a frame-rate-derived smoothing window) the rationale is stated alongside the
+value in the section that introduces it. Implementation-level testing performed
+during this development process is documented in
+Section~\ref{sec:methodology_testing}.
+
+% \section{Object and Ball Detection}
+% \label{sec:methodology_detection}
+
+% Detection is the entry point of the pipeline: every downstream stage --- tracking, team
+% classification, pitch-space projection, and tactical reasoning --- consumes its outputs.
+% The system uses two distinct detectors. A four-class \emph{generic detector} locates
+% players, goalkeepers, referees, and the ball, and a single-class \emph{dedicated ball
+% detector} re-runs ball localisation on every frame. The ball-class outputs of the
+% generic detector are discarded, and only its player, goalkeeper, and referee predictions
+% flow into the rest of the pipeline. This subsection describes both models, their
+% training, and the empirical reasoning behind splitting ball detection from the generic
+% head, addressing the first project objective stated in Section~\ref{sec:aims}.
+
+% \subsection{Generic Four-Class Detector}
+% \label{subsec:methodology_main_detector}
+
+% The generic detector is a YOLOv8m model~\cite{Jocher2023} fine-tuned on the
+% \textit{Football\_object\_detection\_dataset} hosted on Roboflow, comprising 768
+% broadcast frames split 618/75/75 across train, validation, and test. The dataset contains
+% four annotated classes amounting to 18{,}838 instances in total, with a heavily skewed
+% distribution: the player class alone accounts for 15{,}297 instances --- 12.6 times as
+% many as the ball class (1{,}213) and 26.3 times as many as the goalkeeper class (581).
+% This imbalance has direct consequences for per-class performance.
+
+% Training was carried out on a single NVIDIA A100-SXM4-80GB GPU using Ultralytics 8.4.21
+% on PyTorch 2.8.0. The medium variant (\texttt{yolov8m.pt}) was selected as a compromise
+% between accuracy and inference latency. Inputs were resized to $1280 \times 1280$ to
+% preserve the small-object detail required for ball localisation, which constrained the
+% batch size to 4. The model was trained for 50 epochs with \texttt{lr0}=0.01 and a linear
+% schedule, using Ultralytics's automatic optimiser selection, mixed-precision training,
+% and the framework's default augmentation regime (mosaic, horizontal flip, HSV jitter,
+% random scale and translate, random erasing); mosaic was disabled in the final ten
+% epochs. The loss weighting used the standard YOLO ratios (\texttt{box}=7.5,
+% \texttt{cls}=0.5, \texttt{dfl}=1.5). The full run completed in 887 seconds.
+
+% Test mAP@50 reached 0.855, exceeding the threshold of 0.80 set as success
+% criterion~(i) in Section~\ref{sec:aims}. Inspecting the per-class breakdown is more
+% revealing than the headline figure. As the upper rows of
+% Table~\ref{tab:detection_metrics} show, Player and Referee classes are essentially
+% solved (mAP@50 above 0.98 and F1 above 0.96 in both cases). Goalkeepers reach mAP@50 of
+% 0.982 with a small amount of confusion against the Player class (roughly 10\% of true
+% goalkeepers are classified as players in the normalised confusion matrix), which is
+% expected: a goalkeeper standing outside their penalty area is visually almost
+% indistinguishable from an outfield player at broadcast resolution. The ball, by
+% contrast, achieves only 0.459 mAP@50, with recall of 0.393. The confusion matrix
+% attributes 31\% of true balls to the background class and shows that 40\% of
+% predictions assigned to the Ball class are background false positives. The
+% precision/recall framework underlying these metrics is the one introduced in
+% Equation~\ref{eq:precision_recall}, and the mAP definition follows
+% Section~\ref{subsec:background_map}.
+
+% \subsection{Dedicated Ball Detector}
+% \label{subsec:methodology_ball_detector}
+
+% The poor ball-class performance of the generic detector is the empirical justification
+% for training a separate ball-only model. Two structural factors drive the gap. First,
+% class imbalance: the ball appears once per image on average, while players appear
+% roughly twenty times, so localisation loss on player boxes dominates the gradient
+% signal during training. Second, scale: at broadcast distance the ball occupies only a
+% handful of pixels, far smaller than the typical anchor distribution of single-stage
+% detectors~\cite{Redmon2016, redmon2018yolov3}. A single-class detector trained on a
+% ball-curated dataset removes the first issue entirely and lets model capacity focus on
+% the second.
+
+% The dedicated detector is a YOLOv8x model trained on the
+% \textit{ball\_dataset} (Roboflow), comprising 1{,}165 frames split 932/114/119, each
+% with exactly one ball annotation. The xlarge variant was chosen because the marginal
+% inference cost is acceptable for a single-class head and because a larger backbone
+% typically helps with fine-grained small-object features. Training used the same
+% $1280 \times 1280$ resolution and augmentation regime as the generic detector, but ran
+% for 150 epochs (patience 30) at batch size 8, completing in approximately 110 minutes.
+
+% The resulting model achieves test mAP@50 of 0.950, precision 0.964, recall 0.896, and
+% F1 0.929 --- an absolute improvement of 49 percentage points in mAP@50 over the
+% generic detector on the same ball-detection task, and a recall improvement from 0.393
+% to 0.896 (Table~\ref{tab:detection_metrics}). Both detectors now clear success
+% criterion~(i) for every class the pipeline relies on. At inference time the dedicated
+% detector is run with a permissive confidence threshold (\texttt{conf}=0.05) so that
+% legitimate but low-confidence ball detections are not suppressed before downstream
+% filtering can use temporal context; a temporal coherence filter then selects, from the
+% surviving candidates, the detection nearest the previous frame's ball centre subject
+% to a maximum displacement of 80 pixels and a minimum confidence of 0.25. This filter
+% relies on the dedicated detector producing high-recall candidates at low confidence, a
+% behaviour the generic detector cannot reliably provide.
+
+% The generic detector runs at inference with confidence threshold 0.2 and IoU threshold
+% 0.5 for non-maximum suppression, the latter following the standard formulation of
+% Equation~\ref{eq:iou} and the suppression procedure discussed in
+% Section~\ref{subsec:background_iou_nms}. The low confidence threshold is deliberate:
+% the downstream tracker performs additional quality gating during association, and
+% recovering a marginal player detection that the tracker can stabilise across frames is
+% preferable to dropping it at the detector stage.
+
+% \begin{table}[!htbp]
+% \centering
+% \small
+% \begin{tabular}{lccccc}
+% \toprule
+% \textbf{Class} & \textbf{P} & \textbf{R} & \textbf{F1} & \textbf{mAP@50} & \textbf{mAP@50--95} \\
+% \midrule
+% \multicolumn{6}{l}{\textit{Generic four-class detector (test)}} \\
+% Ball         & 0.818 & 0.393 & 0.531 & 0.459 & 0.194 \\
+% Goalkeeper   & 0.953 & 0.983 & 0.968 & 0.982 & 0.808 \\
+% Player       & 0.991 & 0.991 & 0.991 & 0.995 & 0.823 \\
+% Referee      & 0.939 & 0.981 & 0.960 & 0.983 & 0.707 \\
+% \midrule
+% \multicolumn{6}{l}{\textit{Dedicated ball detector (test)}} \\
+% Ball         & 0.964 & 0.896 & 0.929 & 0.950 & 0.556 \\
+% \bottomrule
+% \end{tabular}
+% \caption{Per-class detection performance on the held-out test sets. The generic
+% detector solves Player, Referee, and Goalkeeper classes but fails on the Ball class,
+% recovering only 39\% of true balls. The dedicated single-class detector raises ball
+% mAP@50 to 0.950 --- a 49 percentage-point absolute improvement on the same task.}
+% \label{tab:detection_metrics}
+% \end{table}
 
 \section{Object and Ball Detection}
 \label{sec:methodology_detection}
 
-Detection is the entry point of the pipeline: every downstream stage --- tracking, team
-classification, pitch-space projection, and tactical reasoning --- consumes its outputs.
-The system uses two distinct detectors. A four-class \emph{generic detector} locates
-players, goalkeepers, referees, and the ball, and a single-class \emph{dedicated ball
-detector} re-runs ball localisation on every frame. The ball-class outputs of the
-generic detector are discarded, and only its player, goalkeeper, and referee predictions
-flow into the rest of the pipeline. This subsection describes both models, their
-training, and the empirical reasoning behind splitting ball detection from the generic
-head, addressing the first project objective stated in Section~\ref{sec:aims}.
+The pipeline uses two distinct YOLO detectors. A four-class \emph{generic
+detector} locates players, goalkeepers, referees, and the ball, and a
+single-class \emph{dedicated ball detector} re-runs ball localisation on every
+frame. Only the player, goalkeeper, and referee predictions of the generic
+detector flow into the rest of the pipeline; its ball-class outputs are
+discarded for the empirical reason developed below. This section covers both
+models, addressing FR1 and the first project objective of
+Section~\ref{sec:aims}.
 
 \subsection{Generic Four-Class Detector}
 \label{subsec:methodology_main_detector}
 
 The generic detector is a YOLOv8m model~\cite{Jocher2023} fine-tuned on the
-\textit{Football\_object\_detection\_dataset} hosted on Roboflow, comprising 768
-broadcast frames split 618/75/75 across train, validation, and test. The dataset contains
-four annotated classes amounting to 18{,}838 instances in total, with a heavily skewed
-distribution: the player class alone accounts for 15{,}297 instances --- 12.6 times as
-many as the ball class (1{,}213) and 26.3 times as many as the goalkeeper class (581).
-This imbalance has direct consequences for per-class performance.
+\textit{Football\_object\_detection\_dataset} (Roboflow), comprising 768
+broadcast frames split 618/75/75 across train/validation/test. The dataset
+contains 18{,}838 instances across the four classes, distributed unevenly:
+players account for 15{,}297 instances --- 12.6 times as many as the ball
+class (1{,}213) and 26.3 times as many as the goalkeeper class (581). This
+imbalance has direct consequences for per-class performance.
 
-Training was carried out on a single NVIDIA A100-SXM4-80GB GPU using Ultralytics 8.4.21
-on PyTorch 2.8.0. The medium variant (\texttt{yolov8m.pt}) was selected as a compromise
-between accuracy and inference latency. Inputs were resized to $1280 \times 1280$ to
-preserve the small-object detail required for ball localisation, which constrained the
-batch size to 4. The model was trained for 50 epochs with \texttt{lr0}=0.01 and a linear
-schedule, using Ultralytics's automatic optimiser selection, mixed-precision training,
-and the framework's default augmentation regime (mosaic, horizontal flip, HSV jitter,
-random scale and translate, random erasing); mosaic was disabled in the final ten
-epochs. The loss weighting used the standard YOLO ratios (\texttt{box}=7.5,
-\texttt{cls}=0.5, \texttt{dfl}=1.5). The full run completed in 887 seconds.
+The medium variant (\texttt{yolov8m.pt}) was selected as a compromise between
+detection accuracy and inference cost. The pipeline is intended to run on
+commodity hardware without a discrete GPU, so a larger backbone would dominate
+end-to-end runtime even though it might add a small amount of accuracy. Inputs
+were resized to $1280 \times 1280$ to preserve the small-object detail
+required for ball localisation, which constrained training-time batch size to
+4 on the available NVIDIA A100 GPU. The model was trained for 50 epochs using
+Ultralytics 8.4.21 on PyTorch 2.8.0 with the framework's default augmentation
+regime; the full run completed in approximately 15 minutes. Complete
+training-time hyperparameters are catalogued in
+Section~\ref{subsec:methodology_reproducibility}.
 
-Test mAP@50 reached 0.855, exceeding the threshold of 0.80 set as success
-criterion~(i) in Section~\ref{sec:aims}. Inspecting the per-class breakdown is more
-revealing than the headline figure. As the upper rows of
-Table~\ref{tab:detection_metrics} show, Player and Referee classes are essentially
-solved (mAP@50 above 0.98 and F1 above 0.96 in both cases). Goalkeepers reach mAP@50 of
-0.982 with a small amount of confusion against the Player class (roughly 10\% of true
-goalkeepers are classified as players in the normalised confusion matrix), which is
-expected: a goalkeeper standing outside their penalty area is visually almost
-indistinguishable from an outfield player at broadcast resolution. The ball, by
-contrast, achieves only 0.459 mAP@50, with recall of 0.393. The confusion matrix
-attributes 31\% of true balls to the background class and shows that 40\% of
-predictions assigned to the Ball class are background false positives. The
-precision/recall framework underlying these metrics is the one introduced in
-Equation~\ref{eq:precision_recall}, and the mAP definition follows
-Section~\ref{subsec:background_map}.
+Held-out test mAP@50 reached 0.855 on this detector, clearing the threshold
+of 0.80 set as success criterion~(i) in Section~\ref{sec:aims}; full per-class
+metrics are reported in Chapter~\ref{ch:evaluation}. One per-class result is
+relevant here as design evidence: the Player, Goalkeeper, and Referee classes
+all reach mAP@50 above 0.98 on the test set, but the Ball class achieves only
+0.459 with recall 0.393. Inspection of the normalised confusion matrix during
+development showed that 31\% of true balls are classified as background and
+40\% of predictions assigned to the Ball class are background false positives.
+This pattern --- high precision on the three large-object classes paired with
+a recall collapse on the ball --- is the diagnostic evidence that motivated a
+separate ball detector.
 
 \subsection{Dedicated Ball Detector}
 \label{subsec:methodology_ball_detector}
 
-The poor ball-class performance of the generic detector is the empirical justification
-for training a separate ball-only model. Two structural factors drive the gap. First,
-class imbalance: the ball appears once per image on average, while players appear
-roughly twenty times, so localisation loss on player boxes dominates the gradient
-signal during training. Second, scale: at broadcast distance the ball occupies only a
-handful of pixels, far smaller than the typical anchor distribution of single-stage
-detectors~\cite{Redmon2016, redmon2018yolov3}. A single-class detector trained on a
-ball-curated dataset removes the first issue entirely and lets model capacity focus on
-the second.
+Two structural factors drive the recall collapse. First, class imbalance: the
+ball appears once per image on average while players appear roughly twenty
+times, so localisation loss on player boxes dominates the gradient signal.
+Second, scale: at broadcast distance the ball occupies only a handful of
+pixels, far smaller than the typical anchor distribution of single-stage
+detectors~\cite{Redmon2016, redmon2018yolov3}. A single-class detector trained
+on a ball-curated dataset removes the first issue entirely and lets model
+capacity focus on the second.
 
 The dedicated detector is a YOLOv8x model trained on the
-\textit{ball\_dataset} (Roboflow), comprising 1{,}165 frames split 932/114/119, each
-with exactly one ball annotation. The xlarge variant was chosen because the marginal
-inference cost is acceptable for a single-class head and because a larger backbone
-typically helps with fine-grained small-object features. Training used the same
-$1280 \times 1280$ resolution and augmentation regime as the generic detector, but ran
-for 150 epochs (patience 30) at batch size 8, completing in approximately 110 minutes.
+\textit{ball\_dataset} (Roboflow), comprising 1{,}165 frames split 932/114/119
+each with exactly one ball annotation. The xlarge variant was chosen because
+the marginal inference cost is acceptable for a single-class head and a
+larger backbone typically helps on fine-grained small-object features.
+Training used the same $1280 \times 1280$ resolution and augmentation regime
+as the generic detector, ran for 150 epochs at batch size 8, and completed in
+approximately 110 minutes. The resulting model achieves test mAP@50 of 0.950
+and recall 0.896 --- a 49 percentage-point absolute improvement over the
+generic detector's ball performance, and the headline diagnostic of
+Table~\ref{tab:detection_ball_comparison}.
 
-The resulting model achieves test mAP@50 of 0.950, precision 0.964, recall 0.896, and
-F1 0.929 --- an absolute improvement of 49 percentage points in mAP@50 over the
-generic detector on the same ball-detection task, and a recall improvement from 0.393
-to 0.896 (Table~\ref{tab:detection_metrics}). Both detectors now clear success
-criterion~(i) for every class the pipeline relies on. At inference time the dedicated
-detector is run with a permissive confidence threshold (\texttt{conf}=0.05) so that
-legitimate but low-confidence ball detections are not suppressed before downstream
-filtering can use temporal context; a temporal coherence filter then selects, from the
-surviving candidates, the detection nearest the previous frame's ball centre subject
-to a maximum displacement of 80 pixels and a minimum confidence of 0.25. This filter
-relies on the dedicated detector producing high-recall candidates at low confidence, a
+The dedicated detector is run at inference with a deliberately permissive
+confidence threshold (\texttt{conf}=0.05) so that low-confidence but
+legitimate ball detections survive into the temporal filtering stage. The
+filter then selects, from the surviving candidates per frame, the detection
+nearest to the previous frame's ball centre subject to a maximum displacement of
+80~pixels and a minimum confidence of 0.25. The 80-pixel gate is a
+plausibility constraint on per-frame ball motion at typical broadcast frame
+rates and resolutions; the 0.25 minimum is the second stage of confidence
+gating that the permissive detector threshold defers to. The filter relies on
+the dedicated detector producing a high-recall set of candidates per frame, a
 behaviour the generic detector cannot reliably provide.
 
-The generic detector runs at inference with confidence threshold 0.2 and IoU threshold
-0.5 for non-maximum suppression, the latter following the standard formulation of
-Equation~\ref{eq:iou} and the suppression procedure discussed in
-Section~\ref{subsec:background_iou_nms}. The low confidence threshold is deliberate:
-the downstream tracker performs additional quality gating during association, and
-recovering a marginal player detection that the tracker can stabilise across frames is
-preferable to dropping it at the detector stage.
+The generic detector runs at inference with confidence threshold 0.2 and IoU
+threshold 0.5 for non-maximum suppression, the latter following
+Equation~\ref{eq:iou} and the procedure of
+Section~\ref{subsec:background_iou_nms}. The 0.2 confidence threshold is
+deliberately low: the downstream tracker performs additional quality gating
+during association, and recovering a marginal player detection that the
+tracker can stabilise across frames is preferable to dropping it at the
+detector stage.
 
 \begin{table}[!htbp]
 \centering
 \small
-\begin{tabular}{lccccc}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lcccccc}
 \toprule
-\textbf{Class} & \textbf{P} & \textbf{R} & \textbf{F1} & \textbf{mAP@50} & \textbf{mAP@50--95} \\
+\textbf{Detector} & \textbf{P} & \textbf{R} & \textbf{F1} & \textbf{mAP@50} & \textbf{mAP@50--95} \\
 \midrule
-\multicolumn{6}{l}{\textit{Generic four-class detector (test)}} \\
-Ball         & 0.818 & 0.393 & 0.531 & 0.459 & 0.194 \\
-Goalkeeper   & 0.953 & 0.983 & 0.968 & 0.982 & 0.808 \\
-Player       & 0.991 & 0.991 & 0.991 & 0.995 & 0.823 \\
-Referee      & 0.939 & 0.981 & 0.960 & 0.983 & 0.707 \\
-\midrule
-\multicolumn{6}{l}{\textit{Dedicated ball detector (test)}} \\
-Ball         & 0.964 & 0.896 & 0.929 & 0.950 & 0.556 \\
+Generic (Ball class)   & 0.818 & 0.393 & 0.531 & 0.459 & 0.194 \\
+Dedicated ball         & 0.964 & 0.896 & 0.929 & 0.950 & 0.556 \\
 \bottomrule
 \end{tabular}
-\caption{Per-class detection performance on the held-out test sets. The generic
-detector solves Player, Referee, and Goalkeeper classes but fails on the Ball class,
-recovering only 39\% of true balls. The dedicated single-class detector raises ball
-mAP@50 to 0.950 --- a 49 percentage-point absolute improvement on the same task.}
-\label{tab:detection_metrics}
+\caption{Ball-class performance on the held-out test set: generic four-class
+detector versus dedicated single-class detector. The dedicated detector
+raises ball mAP@50 from 0.459 to 0.950 --- a 49 percentage-point absolute
+improvement that motivates the two-detector architecture. Per-class metrics
+for all classes of the generic detector are reported in
+Chapter~\ref{ch:evaluation}.}
+\label{tab:detection_ball_comparison}
 \end{table}
+
+% \section{Multi-Object Tracking}
+% \label{sec:methodology_tracking}
+
+% The detector described in Section~\ref{sec:methodology_detection} is stateless: it
+% produces a fresh set of bounding boxes on every frame with no notion of identity.
+% Every downstream tactical output, from per-player heatmaps to possession statistics
+% to pass detection, depends on tracking those identities consistently across frames.
+% This section describes the multi-object tracker that supplies that continuity, in
+% direct support of the second project objective in Section~\ref{sec:aims}.
+
+% The pipeline follows the tracking-by-detection paradigm formalised in
+% Section~\ref{subsec:background_tracking_by_detection}: detections from each frame
+% are associated with a set of active tracks by solving a bipartite assignment
+% problem, with the cost matrix derived from the spatial overlap between predicted
+% and observed boxes. Concretely, the tracker is invoked through Ultralytics's
+% unified \texttt{model.track()} interface, which wraps the detector call and
+% applies the configured association algorithm in-place. The default tracker is
+% ByteTrack~\cite{ByteTrack}, with BoT-SORT~\cite{BoTSORT} available as a drop-in
+% alternative via a configuration flag (\texttt{--tracker bytetrack.yaml} or
+% \texttt{botsort.yaml}). The two algorithms differ in association strategy --- the
+% two-pass high/low-confidence split of ByteTrack
+% (Section~\ref{subsec:background_bytetrack}) versus the camera-motion-compensated
+% appearance-augmented matching of BoT-SORT
+% (Section~\ref{subsec:background_botsort}) --- and supporting both lets
+% Chapter~\ref{ch:evaluation} compare them quantitatively against success
+% criterion~(ii), HOTA \(\geq 0.45\). Whether that criterion is met is a question for
+% evaluation, not methodology.
+
+% Both trackers are run with the Ultralytics-shipped configuration files unchanged:
+% the IoU and confidence thresholds, Kalman-filter noise parameters, and track
+% lifecycle constants are those distributed with the framework. Tuning the tracker
+% configuration was deliberately left out of scope: the project's contribution is in
+% what is built on top of the tracker, not in re-deriving association
+% hyperparameters that are already well-studied~\cite{ByteTrack, BoTSORT}, and using
+% the public defaults makes the comparative evaluation in
+% Chapter~\ref{ch:evaluation} a like-for-like baseline rather than a hyperparameter
+% sweep.
+
+% The tracker outputs a set of identified detections per frame, each carrying a
+% class label, bounding box, confidence score, and stable track identifier. These
+% are split by class in the per-frame loop: player and goalkeeper tracks feed the
+% team-classification module of Section~\ref{sec:methodology_team}, while referee
+% tracks bypass it (referees do not belong to either team and are excluded from
+% possession reasoning in Section~\ref{sec:methodology_tactical}). The ball is
+% treated separately: with at most one ball on the pitch at any moment,
+% multi-object association is unnecessary, and the temporal coherence filter
+% described in Section~\ref{sec:methodology_detection} provides the equivalent
+% single-target stabilisation.
 
 \section{Multi-Object Tracking}
 \label{sec:methodology_tracking}
 
-The detector described in Section~\ref{sec:methodology_detection} is stateless: it
-produces a fresh set of bounding boxes on every frame with no notion of identity.
-Every downstream tactical output, from per-player heatmaps to possession statistics
-to pass detection, depends on tracking those identities consistently across frames.
-This section describes the multi-object tracker that supplies that continuity, in
-direct support of the second project objective in Section~\ref{sec:aims}.
+The detector outputs of Section~\ref{sec:methodology_detection} are stateless,
+but every downstream tactical output depends on stable identities across
+frames. The pipeline meets this need with a multi-object tracker, addressing
+FR2 and the second project objective of Section~\ref{sec:aims}.
 
-The pipeline follows the tracking-by-detection paradigm formalised in
-Section~\ref{subsec:background_tracking_by_detection}: detections from each frame
-are associated with a set of active tracks by solving a bipartite assignment
-problem, with the cost matrix derived from the spatial overlap between predicted
-and observed boxes. Concretely, the tracker is invoked through Ultralytics's
-unified \texttt{model.track()} interface, which wraps the detector call and
-applies the configured association algorithm in-place. The default tracker is
-ByteTrack~\cite{ByteTrack}, with BoT-SORT~\cite{BoTSORT} available as a drop-in
-alternative via a configuration flag (\texttt{--tracker bytetrack.yaml} or
-\texttt{botsort.yaml}). The two algorithms differ in association strategy --- the
-two-pass high/low-confidence split of ByteTrack
-(Section~\ref{subsec:background_bytetrack}) versus the camera-motion-compensated
-appearance-augmented matching of BoT-SORT
-(Section~\ref{subsec:background_botsort}) --- and supporting both lets
-Chapter~\ref{ch:evaluation} compare them quantitatively against success
-criterion~(ii), HOTA \(\geq 0.45\). Whether that criterion is met is a question for
-evaluation, not methodology.
+The tracker follows the tracking-by-detection paradigm of
+Section~\ref{subsec:background_tracking_by_detection}: per-frame detections
+are associated with active tracks by solving a bipartite assignment problem
+on a cost matrix derived from spatial overlap between predicted and observed
+boxes. The pipeline invokes this through Ultralytics's unified
+\texttt{model.track()} interface, which wraps the detector call and applies
+the configured association algorithm in-place. The default tracker is
+ByteTrack~\cite{ByteTrack}, with BoT-SORT~\cite{BoTSORT} available as a
+drop-in alternative through a configuration flag (\texttt{--tracker
+bytetrack.yaml} or \texttt{botsort.yaml}). The two algorithms differ in their
+association strategies (Sections~\ref{subsec:background_bytetrack}
+and~\ref{subsec:background_botsort}); supporting both lets
+Chapter~\ref{ch:evaluation} compare them like-for-like against success
+criterion~(ii), HOTA $\geq 0.45$.
 
-Both trackers are run with the Ultralytics-shipped configuration files unchanged:
-the IoU and confidence thresholds, Kalman-filter noise parameters, and track
-lifecycle constants are those distributed with the framework. Tuning the tracker
-configuration was deliberately left out of scope: the project's contribution is in
-what is built on top of the tracker, not in re-deriving association
-hyperparameters that are already well-studied~\cite{ByteTrack, BoTSORT}, and using
-the public defaults makes the comparative evaluation in
-Chapter~\ref{ch:evaluation} a like-for-like baseline rather than a hyperparameter
+Both trackers run with their Ultralytics-shipped configuration files
+unmodified, in line with the development methodology of
+Section~\ref{sec:development_methodology}: tracker-internal hyperparameters
+are well-studied~\cite{ByteTrack, BoTSORT} and tuning them was deliberately
+out of scope. Holding the configurations to their published defaults also
+makes the comparative evaluation a fair baseline rather than a hyperparameter
 sweep.
 
-The tracker outputs a set of identified detections per frame, each carrying a
-class label, bounding box, confidence score, and stable track identifier. These
-are split by class in the per-frame loop: player and goalkeeper tracks feed the
-team-classification module of Section~\ref{sec:methodology_team}, while referee
-tracks bypass it (referees do not belong to either team and are excluded from
-possession reasoning in Section~\ref{sec:methodology_tactical}). The ball is
-treated separately: with at most one ball on the pitch at any moment,
-multi-object association is unnecessary, and the temporal coherence filter
-described in Section~\ref{sec:methodology_detection} provides the equivalent
+The tracker emits, per frame, a set of identified detections each carrying a
+class label, bounding box, confidence score, and stable track identifier. The
+per-frame loop splits these by class: player and goalkeeper tracks feed the
+team classifier of Section~\ref{sec:methodology_team}, while referee tracks
+bypass it because referees belong to neither team and are excluded from
+possession reasoning. The ball is handled outside the multi-object tracker
+because at most one ball is on the pitch at any moment; the temporal coherence
+filter of Section~\ref{sec:methodology_detection} provides the equivalent
 single-target stabilisation.
+
+% \begin{figure}[!htbp]
+%     \centering
+%     \includegraphics[width=\linewidth]{images/tracking_occlusion_strip.png}
+%     \caption{Tracking continuity through partial occlusion. The same player
+%     retains track identifier across frames separated by an intervening occlusion
+%     event, illustrating the role of low-confidence detection retention in the
+%     ByteTrack association strategy. Frames sampled from an annotated output of
+%     the pipeline.}
+%     \label{fig:tracking_occlusion_strip}
+% \end{figure}
+
+% \section{Team Classification}
+% \label{sec:methodology_team}
+
+% Producing per-player team labels without manual annotation is a direct response to
+% the third project objective in Section~\ref{sec:aims}. The classification problem
+% is genuinely unsupervised: each match brings a novel pair of kits, no labelled
+% training data is available, and the only signal is visual appearance. The pipeline
+% addresses this with the SigLIP--UMAP--KMeans formulation introduced in
+% Section~\ref{sec:background_team_id}, integrated through the open-source
+% \texttt{sports} library~\cite{roboflow_sports}, which provides a reference
+% implementation of the embedding extraction, dimensionality reduction, and
+% clustering steps. The contribution of this work is the surrounding architecture
+% that makes those building blocks usable in the per-frame pipeline: a one-shot
+% warmup phase that fits the clustering on a representative crop set, a
+% torso-focused cropping strategy that improves the quality of the embeddings fed
+% into the cluster, a track-level temporal smoothing layer that absorbs per-frame
+% prediction noise, and a separate goalkeeper resolver that handles the structural
+% mismatch between two-cluster KMeans and a three-kit pitch. Each is described
+% below.
+
+% \subsection{Warmup-Phase Integration}
+% \label{subsec:methodology_warmup}
+
+% The clustering algorithm specified in Equation~\ref{eq:kmeans_objective} is fitted
+% once per video, in a dedicated warmup phase that runs before the per-frame loop
+% begins. The warmup samples frames at a fixed stride (\texttt{warmup\_stride}=30,
+% or roughly one frame per second at 30\,fps) over the first
+% \texttt{warmup\_seconds}=20 of footage. For each sampled frame the generic
+% detector of Section~\ref{sec:methodology_detection} is run, only player-class
+% detections are retained, boxes smaller than $35 \times 35$ pixels are dropped to
+% exclude unreliably tiny crops, and the surviving boxes are torso-cropped
+% (Section~\ref{subsec:methodology_torso_crop}). The collected crops are capped at
+% \texttt{max\_warmup\_crops}=800 and passed in a single batch to the
+% \texttt{TeamClassifier.fit()} routine, which extracts SigLIP embeddings, projects
+% them through UMAP, and fits a $k=2$ KMeans model.
+
+% The decision to fit once rather than incrementally is deliberate. KMeans is
+% sensitive to the empirical distribution of points it sees during fitting, and
+% incremental or per-frame refitting would produce a moving cluster boundary --- so
+% that a player whose embedding sat fractionally on one side of the boundary in
+% frame $t$ could be reassigned in frame $t+1$ purely because the boundary moved.
+% Fitting once on a representative 20-second window of footage stabilises the
+% boundary for the rest of the video, at the cost of being unable to adapt to
+% sudden visual changes such as a substitute appearing in a markedly different kit.
+% In broadcast football this is a benign trade: kits do not change mid-match, and
+% 20 seconds is sufficient for both teams to be visible from multiple camera angles
+% under typical broadcast direction. The 800-crop cap is a memory and runtime
+% constraint chosen empirically; embedding extraction dominates warmup latency, and
+% 800 crops yields a stable enough fit on the test clips used during development.
+
+% \subsection{Torso Cropping}
+% \label{subsec:methodology_torso_crop}
+
+% The crops fed into the embedding model are not the raw player bounding boxes but
+% their upper-body subregions, taken between vertical fractions
+% \texttt{torso\_top}=0.15 and \texttt{torso\_bottom}=0.65 of each box. The
+% motivation is signal-to-noise: the discriminative information for team identity
+% is concentrated in the torso, where the jersey colour, sponsor logo, and crest
+% are visible, whereas the lower body contributes shorts (often shared across home
+% and away kits, and frequently white or black across both teams) and a portion of
+% grass that varies systematically with the camera angle rather than with team
+% membership. The top 15\% is excluded because it predominantly contains the head
+% and a thin halo of background; the bottom 35\% is excluded for the reasons just
+% given. Restricting the crop to this band gives the SigLIP encoder a more
+% homogeneous input distribution and reduces the risk of the embedding model
+% learning to use spurious lower-body or background features as cluster cues.
+
+% \subsection{Track-Level Temporal Smoothing}
+% \label{subsec:methodology_team_smoothing}
+
+% Per-frame team predictions are noisy. Even with a well-conditioned cluster fit
+% and clean torso crops, individual frames can produce wrong assignments due to
+% motion blur, partial occlusion, an unusual pose, or a player turning their back
+% to the camera in a way that hides the jersey. Yet team identity is a constant
+% property of a track: a player does not change teams during a match. The
+% \texttt{TrackMajorityVote} class in \texttt{assigner.py} exploits this by
+% maintaining, for each track identifier, a deque of the last
+% \texttt{team\_smooth}=30 per-frame predictions and emitting the modal value as
+% the smoothed team label.
+
+% Thirty frames corresponds to approximately one second of video at 30\,fps, which
+% is short enough that the smoother can react quickly to a genuine track-identifier
+% switch (when the underlying tracker drops a track and a new identifier replaces
+% it), but long enough that transient per-frame errors are out-voted by the
+% surrounding correct predictions. The smoothing is applied at the track level
+% rather than the detection level, which means that detections without a track
+% identifier --- which the tracker occasionally produces in dense scenes --- fall
+% back to the raw per-frame prediction.
+
+% \subsection{Goalkeeper Resolution}
+% \label{subsec:methodology_gk_resolver}
+
+% The KMeans model is fitted with $k=2$ because there are two outfield teams. This
+% is an intentional simplification: a third cluster for goalkeepers would in
+% principle be possible, but in practice each match contains only two
+% goalkeepers (one per team), the warmup window typically captures one or neither
+% of them in possession-of-ball scenarios, and a $k=3$ fit on a heavily
+% two-team-dominated crop set is poorly conditioned. Since goalkeeper kits are
+% required by competition rules to be visually distinct from both outfield kits and
+% from each other, neither of the two fitted clusters reliably corresponds to a
+% goalkeeper, and a goalkeeper's embedding can fall on either side of the cluster
+% boundary essentially by chance.
+
+% The pipeline resolves this with a separate spatial heuristic implemented in
+% \texttt{gk\_resolver.py}. For each frame, the bottom-centre image-space
+% coordinate of every outfield player on team~0 is averaged to give a team-0
+% centroid, and likewise for team~1. Each detected goalkeeper is then assigned to
+% whichever centroid lies nearer in the image plane. The reasoning is positional:
+% goalkeepers spend the overwhelming majority of match time near or behind their
+% team's most defensive outfield players, so the spatial centroid of a team's
+% outfield is a reliable proxy for which end of the pitch a goalkeeper belongs to.
+% Importantly, this heuristic operates in image-space rather than in pitch-space:
+% it runs before the homography of Section~\ref{sec:methodology_pitch} is required
+% to be valid, which means goalkeeper assignment continues to function during
+% frames where the pitch keypoint detector has insufficient confident landmarks to
+% update the homography. The trade-off is that the heuristic implicitly assumes a
+% broadcast camera angle in which the two teams' centroids project to
+% distinguishable image-space locations --- an assumption that holds for the
+% side-on tactical-camera angle dominant in football broadcasts but would fail for
+% a behind-the-goal angle. For the broadcast footage this project targets, the
+% assumption is empirically safe.
+
+% Whether the assembled team-classification stack meets success criterion~(iii)
+% of Section~\ref{sec:aims} (F1 \(\geq 0.85\)) is reported in
+% Chapter~\ref{ch:evaluation}.
 
 \section{Team Classification}
 \label{sec:methodology_team}
 
-Producing per-player team labels without manual annotation is a direct response to
-the third project objective in Section~\ref{sec:aims}. The classification problem
-is genuinely unsupervised: each match brings a novel pair of kits, no labelled
-training data is available, and the only signal is visual appearance. The pipeline
-addresses this with the SigLIP--UMAP--KMeans formulation introduced in
-Section~\ref{sec:background_team_id}, integrated through the open-source
+Producing per-player team labels without manual annotation directly addresses
+the third project objective in Section~\ref{sec:aims} and FR3 of
+Table~\ref{tab:methodology_requirements}. The classification problem is
+genuinely unsupervised: each match brings a novel pair of kits, no labelled
+training data is available, and the only signal is visual appearance. The
+pipeline addresses this with the SigLIP--UMAP--KMeans formulation introduced
+in Section~\ref{sec:background_team_id}, integrated through the open-source
 \texttt{sports} library~\cite{roboflow_sports}, which provides a reference
 implementation of the embedding extraction, dimensionality reduction, and
-clustering steps. The contribution of this work is the surrounding architecture
-that makes those building blocks usable in the per-frame pipeline: a one-shot
-warmup phase that fits the clustering on a representative crop set, a
-torso-focused cropping strategy that improves the quality of the embeddings fed
-into the cluster, a track-level temporal smoothing layer that absorbs per-frame
-prediction noise, and a separate goalkeeper resolver that handles the structural
-mismatch between two-cluster KMeans and a three-kit pitch. Each is described
-below.
+clustering steps. The contribution of this work lies in the surrounding
+architecture that makes those building blocks usable inside a per-frame
+pipeline: a one-shot warmup phase, a torso-focused cropping strategy,
+track-level temporal smoothing, and a separate goalkeeper resolver. Each is
+described in turn below.
 
 \subsection{Warmup-Phase Integration}
 \label{subsec:methodology_warmup}
 
-The clustering algorithm specified in Equation~\ref{eq:kmeans_objective} is fitted
-once per video, in a dedicated warmup phase that runs before the per-frame loop
-begins. The warmup samples frames at a fixed stride (\texttt{warmup\_stride}=30,
-or roughly one frame per second at 30\,fps) over the first
-\texttt{warmup\_seconds}=20 of footage. For each sampled frame the generic
-detector of Section~\ref{sec:methodology_detection} is run, only player-class
-detections are retained, boxes smaller than $35 \times 35$ pixels are dropped to
-exclude unreliably tiny crops, and the surviving boxes are torso-cropped
-(Section~\ref{subsec:methodology_torso_crop}). The collected crops are capped at
-\texttt{max\_warmup\_crops}=800 and passed in a single batch to the
-\texttt{TeamClassifier.fit()} routine, which extracts SigLIP embeddings, projects
+The clustering algorithm of Equation~\ref{eq:kmeans_objective} is fitted once
+per video, in a dedicated warmup phase that runs before the per-frame loop
+begins. The warmup samples frames at a fixed stride
+(\texttt{warmup\_stride}=30, roughly one frame per second at 30\,fps) over the
+first \texttt{warmup\_seconds}=20 of footage. For each sampled frame the
+generic detector of Section~\ref{sec:methodology_detection} is run, only
+player-class detections are retained, boxes smaller than $35 \times 35$ pixels
+are dropped to exclude unreliably tiny crops, and the surviving boxes are torso-cropped
+(Section~\ref{subsec:methodology_torso_crop}). The collected crops are capped
+at \texttt{max\_warmup\_crops}=800 and passed in a single batch to
+\texttt{TeamClassifier.fit()}, which extracts SigLIP embeddings, projects
 them through UMAP, and fits a $k=2$ KMeans model.
 
-The decision to fit once rather than incrementally is deliberate. KMeans is
-sensitive to the empirical distribution of points it sees during fitting, and
-incremental or per-frame refitting would produce a moving cluster boundary --- so
-that a player whose embedding sat fractionally on one side of the boundary in
-frame $t$ could be reassigned in frame $t+1$ purely because the boundary moved.
-Fitting once on a representative 20-second window of footage stabilises the
-boundary for the rest of the video, at the cost of being unable to adapt to
-sudden visual changes such as a substitute appearing in a markedly different kit.
-In broadcast football this is a benign trade: kits do not change mid-match, and
-20 seconds is sufficient for both teams to be visible from multiple camera angles
-under typical broadcast direction. The 800-crop cap is a memory and runtime
-constraint chosen empirically; embedding extraction dominates warmup latency, and
-800 crops yields a stable enough fit on the test clips used during development.
+The decision to fit once rather than incrementally is the methodological core
+of this design. KMeans is sensitive to the empirical distribution of points
+seen during fitting, and incremental or per-frame refitting would produce a
+moving cluster boundary --- a player whose embedding sat fractionally on one
+side of the boundary in frame $t$ could be reassigned in frame $t+1$ purely
+because the boundary moved, not because the player's appearance changed.
+Fitting once on a representative twenty-second window stabilises the boundary
+for the rest of the video. The trade-off is that the system cannot adapt to
+sudden visual changes such as a substitute appearing in a markedly different
+kit, but in broadcast football this is benign: kits do not change mid-match,
+and twenty seconds is sufficient for both teams to appear under typical
+broadcast direction. The 800-crop cap is an empirical compromise between fit
+stability and the embedding-extraction latency that dominates warmup time.
+
+% \begin{figure}[!htbp]
+%     \centering
+%     \includegraphics[width=\linewidth]{images/warmup_umap_clusters.png}
+%     \caption{Warmup-phase output. Left: representative torso crops produced by
+%     the cropping stage of Section~\ref{subsec:methodology_torso_crop}, sampled
+%     from both teams. Right: 2D UMAP projection of the SigLIP embeddings of all
+%     warmup-phase crops, coloured by the resulting $k=2$ KMeans cluster
+%     assignment, with the two cluster centroids marked.}
+%     \label{fig:warmup_umap}
+% \end{figure}
 
 \subsection{Torso Cropping}
 \label{subsec:methodology_torso_crop}
 
-The crops fed into the embedding model are not the raw player bounding boxes but
-their upper-body subregions, taken between vertical fractions
-\texttt{torso\_top}=0.15 and \texttt{torso\_bottom}=0.65 of each box. The
-motivation is signal-to-noise: the discriminative information for team identity
-is concentrated in the torso, where the jersey colour, sponsor logo, and crest
-are visible, whereas the lower body contributes shorts (often shared across home
-and away kits, and frequently white or black across both teams) and a portion of
-grass that varies systematically with the camera angle rather than with team
-membership. The top 15\% is excluded because it predominantly contains the head
-and a thin halo of background; the bottom 35\% is excluded for the reasons just
-given. Restricting the crop to this band gives the SigLIP encoder a more
-homogeneous input distribution and reduces the risk of the embedding model
-learning to use spurious lower-body or background features as cluster cues.
+The crops fed into the embedding model are the upper-body subregions of each
+player's bounding box, taken between vertical fractions
+\texttt{torso\_top}=0.15 and \texttt{torso\_bottom}=0.65. The motivation is
+signal-to-noise: the discriminative information for team identity is
+concentrated in the torso, where the jersey colour, sponsor logo, and crest
+appear, while the lower body contributes shorts (frequently a colour shared
+between home and away kits) and grass that varies systematically with the
+camera angle rather than with team membership. Excluding the top fraction
+removes the head and a thin halo of background; excluding the bottom
+fraction removes the lower-body noise just described. Restricting the crop to
+this band gives the SigLIP encoder a more homogeneous input distribution and
+reduces the risk of the embedding model learning spurious lower-body or
+background features as cluster cues.
 
 \subsection{Track-Level Temporal Smoothing}
 \label{subsec:methodology_team_smoothing}
 
-Per-frame team predictions are noisy. Even with a well-conditioned cluster fit
-and clean torso crops, individual frames can produce wrong assignments due to
-motion blur, partial occlusion, an unusual pose, or a player turning their back
-to the camera in a way that hides the jersey. Yet team identity is a constant
-property of a track: a player does not change teams during a match. The
-\texttt{TrackMajorityVote} class in \texttt{assigner.py} exploits this by
-maintaining, for each track identifier, a deque of the last
-\texttt{team\_smooth}=30 per-frame predictions and emitting the modal value as
-the smoothed team label.
+Per-frame team predictions are noisy. Even with a well-conditioned cluster
+fit and clean torso crops, individual frames can produce wrong assignments due to
+motion blur, partial occlusion, an unusual pose, or a player turning their
+back to the camera in a way that hides the jersey. Yet team identity is a
+constant property of a track --- a player does not change teams during a
+match. The \texttt{TrackMajorityVote} class in \texttt{assigner.py} exploits
+this by maintaining, for each track identifier, a deque of the last
+\texttt{team\_smooth}=30 per-frame predictions and emitting the modal value
+as the smoothed team label.
 
-Thirty frames corresponds to approximately one second of video at 30\,fps, which
-is short enough that the smoother can react quickly to a genuine track-identifier
-switch (when the underlying tracker drops a track and a new identifier replaces
-it), but long enough that transient per-frame errors are out-voted by the
+Thirty frames is approximately one second at 30\,fps. This window is short
+enough that the smoother reacts quickly when a track identifier is replaced
+(when the underlying tracker drops a track and a new identifier takes over),
+but long enough that transient per-frame errors are out-voted by the
 surrounding correct predictions. The smoothing is applied at the track level
-rather than the detection level, which means that detections without a track
-identifier --- which the tracker occasionally produces in dense scenes --- fall
-back to the raw per-frame prediction.
+rather than per detection, so detections that arrive without a track
+identifier fall back to the raw per-frame prediction.
 
 \subsection{Goalkeeper Resolution}
 \label{subsec:methodology_gk_resolver}
 
-The KMeans model is fitted with $k=2$ because there are two outfield teams. This
-is an intentional simplification: a third cluster for goalkeepers would in
-principle be possible, but in practice each match contains only two
-goalkeepers (one per team), the warmup window typically captures one or neither
-of them in possession-of-ball scenarios, and a $k=3$ fit on a heavily
-two-team-dominated crop set is poorly conditioned. Since goalkeeper kits are
-required by competition rules to be visually distinct from both outfield kits and
-from each other, neither of the two fitted clusters reliably corresponds to a
-goalkeeper, and a goalkeeper's embedding can fall on either side of the cluster
-boundary essentially by chance.
+The KMeans model is fitted with $k=2$ because there are two outfield teams.
+Goalkeeper kits are required by competition rules to be visually distinct
+from both outfield kits and from each other, so neither of the two fitted
+clusters reliably corresponds to a goalkeeper, and a goalkeeper's embedding
+can fall on either side of the cluster boundary essentially by chance. A
+$k=3$ fit was considered but rejected: each match contains only two
+goalkeepers, the warmup window typically captures few goalkeeper crops, and
+$k=3$ on a heavily two-team-dominated crop set is poorly conditioned.
 
-The pipeline resolves this with a separate spatial heuristic implemented in
-\texttt{gk\_resolver.py}. For each frame, the bottom-centre image-space
-coordinate of every outfield player on team~0 is averaged to give a team-0
-centroid, and likewise for team~1. Each detected goalkeeper is then assigned to
-whichever centroid lies nearer in the image plane. The reasoning is positional:
-goalkeepers spend the overwhelming majority of match time near or behind their
-team's most defensive outfield players, so the spatial centroid of a team's
-outfield is a reliable proxy for which end of the pitch a goalkeeper belongs to.
-Importantly, this heuristic operates in image-space rather than in pitch-space:
-it runs before the homography of Section~\ref{sec:methodology_pitch} is required
-to be valid, which means goalkeeper assignment continues to function during
-frames where the pitch keypoint detector has insufficient confident landmarks to
-update the homography. The trade-off is that the heuristic implicitly assumes a
-broadcast camera angle in which the two teams' centroids project to
-distinguishable image-space locations --- an assumption that holds for the
-side-on tactical-camera angle dominant in football broadcasts but would fail for
-a behind-the-goal angle. For the broadcast footage this project targets, the
-assumption is empirically safe.
+The pipeline resolves goalkeeper identity through a separate spatial
+heuristic implemented in \texttt{gk\_resolver.py}. For each frame, the
+bottom-centre image-space coordinate of every outfield player on team~0 is
+averaged to give a team-0 centroid, and likewise for team~1. Each detected
+goalkeeper is then assigned to whichever centroid lies nearer in the image
+plane. The reasoning is positional: goalkeepers spend the overwhelming
+majority of match time near or behind their own team's most defensive
+outfield players. Importantly, this heuristic operates in image-space rather
+than pitch-space, which means it continues to work during frames where the
+homography of Section~\ref{sec:methodology_pitch} cannot be updated due to
+insufficient confident keypoints. The trade-off relies on the implicit assumption 
+that the two teams' centroids project to distinguishable image-space locations, 
+which is valid for the side-on tactical-camera angles that dominate football broadcasts.
 
 Whether the assembled team-classification stack meets success criterion~(iii)
-of Section~\ref{sec:aims} (F1 \(\geq 0.85\)) is reported in
+of Section~\ref{sec:aims} (F1 $\geq 0.85$) is reported in
 Chapter~\ref{ch:evaluation}.
+
+% \section{Pitch Registration}
+% \label{sec:methodology_pitch}
+
+% The detections produced by the modules described so far are confined to image
+% coordinates, but every tactical output the system computes --- bird's-eye
+% visualisation, heatmaps, speed and distance, possession proximity, offside lines
+% --- is defined in pitch coordinates. Pitch registration is the geometric stage
+% that bridges the two. The pipeline addresses this in two parts: a YOLO-pose model
+% trained to localise a fixed set of pitch landmarks, and a homography estimator
+% that consumes those landmarks via the Direct Linear Transform formulation of
+% Section~\ref{subsec:background_dlt} to produce a per-frame mapping into
+% pitch-space. This section describes both, in support of the fourth project
+% objective in Section~\ref{sec:aims}.
+
+% \subsection{Keypoint Detector}
+% \label{subsec:methodology_keypoint_model}
+
+% A YOLOv8x-pose model~\cite{Jocher2023} is fine-tuned to detect a single class
+% (\emph{pitch}) annotated with 32 keypoints corresponding to the
+% geometrically distinctive features formed by pitch markings: line intersections,
+% penalty-area corners, six-yard-box corners, halfway-line endpoints, and the
+% tangencies of the centre circle and penalty arcs with their associated straight
+% lines. The choice of keypoints follows the broadcast-football registration
+% literature~\cite{Theiner2022, TVCalib2023}: each keypoint has a known
+% real-world position in pitch coordinates, so any subset detected with sufficient
+% confidence yields image-to-pitch correspondences directly usable in DLT.
+
+% The detector was trained on the \textit{football\_field\_detection\_dataset}
+% (Roboflow), comprising 317 broadcast frames split 255/34/28 across train,
+% validation, and test partitions. Training used the same A100 hardware and
+% Ultralytics 8.4.21 software stack as the detection models of
+% Section~\ref{sec:methodology_detection}, with input resolution $640 \times 640$,
+% batch size 48, and 500 epochs. One non-default choice deserves explicit comment:
+% the mosaic augmentation that ships with the YOLO defaults was disabled
+% (\texttt{mosaic}=0.0). Mosaic concatenates four training images into a single
+% synthetic input, which is well-motivated for general object detection because it
+% exposes the model to varied object scales and contexts, but the augmentation
+% fragments the global geometric structure of a pitch into four disjoint quadrants.
+% Since the discriminative signal for pitch-keypoint localisation is precisely the
+% spatial relationships between landmarks --- a corner flag is identifiable in part
+% because of its position relative to the goal line and the touchline ---
+% fragmenting that structure trains the model on inputs whose geometry will never
+% appear at inference. Disabling mosaic was therefore a deliberate departure from
+% defaults, motivated by the structural mismatch between the augmentation and the
+% fixed-landmark task.
+
+% The trained model achieves test detection mAP@50 of 0.995 (the pitch is, in
+% practice, always present in broadcast frames, making detection nearly trivial)
+% and test pose mAP@50 of 0.995 with mAP@50--95 of 0.953. Per-keypoint mean errors
+% on the test set cluster around 4 pixels (approximately 0.4\% of the image
+% diagonal), with one notable outlier: \texttt{kp\_16} averages 18.2 pixels,
+% roughly four times the median. This outlier is reported honestly here because it
+% will reappear in the evaluation discussion of homography stability in
+% Chapter~\ref{ch:evaluation}; possible explanations include genuine annotation
+% ambiguity at that landmark or sensitivity to camera angle, neither of which can
+% be definitively resolved from the available evidence. A further caveat applies
+% to keypoints that appear infrequently in the dataset --- \texttt{kp\_29} appears
+% in only 9 training images and \texttt{kp\_15} in 233 --- so per-keypoint error
+% estimates for the rarest landmarks are themselves estimated from very few test
+% instances and should be treated with appropriate scepticism. This visibility
+% imbalance is a structural property of broadcast footage rather than a dataset
+% flaw: the far-side corners of the pitch are simply less frequently in shot than
+% the near-side and central regions.
+
+% \subsection{Stride-Cached Homography Estimation}
+% \label{subsec:methodology_homography}
+
+% Pitch keypoint inference is the slowest stage of the pipeline by a substantial
+% margin: it involves a separate forward pass through a large pose model, often
+% served via a remote inference endpoint. Running it on every frame would dominate
+% end-to-end latency. Two observations make this unnecessary. First, broadcast
+% camera motion is slow relative to frame rate --- a tactical camera pans and
+% zooms over hundreds of milliseconds, not single-frame intervals. Second, the
+% homography itself, once estimated from a stable set of keypoints, is robust to
+% small camera movements. The pipeline exploits this by inferring keypoints only
+% every \texttt{pitch\_stride}=15 frames, caching the resulting
+% \texttt{ViewTransformer}, and reusing it for the intervening frames. At a 30\,fps
+% input that corresponds to recomputing the homography twice per second, well above
+% the rate of meaningful camera motion in broadcast football.
+
+% When inference does run, three thresholds gate the construction of a new
+% homography. Each predicted keypoint must clear a per-keypoint confidence
+% threshold of \texttt{kp\_conf}=0.5; the resulting set of confident keypoints
+% must contain at least \texttt{min\_good\_kps}=6 entries; and the inference itself
+% runs with a model-level confidence floor of 0.3. The 6-keypoint minimum is the
+% most consequential of the three. The DLT system in Equation~\ref{eq:dlt_system}
+% requires four non-collinear point correspondences for a unique homography, and
+% six provides the redundancy that least-squares conditioning needs to suppress
+% the per-keypoint localisation noise reported above without becoming numerically
+% fragile. If insufficient confident keypoints are present in a particular
+% inference frame, the previous homography is retained rather than replaced ---
+% the camera has not moved significantly in the intervening half-second, so the
+% cached transform remains a reasonable approximation. The 0.5 confidence threshold
+% on individual keypoints is calibrated to keep low-quality landmarks out of the
+% correspondence set even when the overall model is confident a pitch is present.
+
+% The resulting \texttt{ViewTransformer} object exposes a vectorised
+% \texttt{transform\_points} method that maps any image-space coordinate into
+% pitch-space using the cached homography, applied as the projective transformation
+% of Equation~\ref{eq:homography_mapping} followed by the dehomogenisation of
+% Equation~\ref{eq:homography_dehomogenised}. Player anchors and the ball are
+% projected through this method on every frame, supplying the pitch-space
+% coordinates that the tactical reasoning stage of
+% Section~\ref{sec:methodology_tactical} consumes. Whether the resulting
+% projections support the qualitatively coherent tactical outputs required by
+% success criterion~(iv) of Section~\ref{sec:aims} is the subject of
+% Chapter~\ref{ch:evaluation}.
 
 \section{Pitch Registration}
 \label{sec:methodology_pitch}
 
-The detections produced by the modules described so far are confined to image
-coordinates, but every tactical output the system computes --- bird's-eye
-visualisation, heatmaps, speed and distance, possession proximity, offside lines
---- is defined in pitch coordinates. Pitch registration is the geometric stage
-that bridges the two. The pipeline addresses this in two parts: a YOLO-pose model
-trained to localise a fixed set of pitch landmarks, and a homography estimator
-that consumes those landmarks via the Direct Linear Transform formulation of
-Section~\ref{subsec:background_dlt} to produce a per-frame mapping into
-pitch-space. This section describes both, in support of the fourth project
-objective in Section~\ref{sec:aims}.
+Pitch registration is the geometric stage that maps image-space detections
+into pitch coordinates, providing the substrate on which all tactical analytics
+operate. The pipeline addresses this in two parts: a YOLO-pose model trained
+to localise a fixed set of pitch landmarks, and a homography estimator that
+consumes those landmarks via the Direct Linear Transform of
+Section~\ref{subsec:background_dlt}. This section addresses FR4 and the fourth
+project objective of Section~\ref{sec:aims}.
 
 \subsection{Keypoint Detector}
 \label{subsec:methodology_keypoint_model}
 
 A YOLOv8x-pose model~\cite{Jocher2023} is fine-tuned to detect a single class
-(\emph{pitch}) annotated with 32 keypoints corresponding to the
-geometrically distinctive features formed by pitch markings: line intersections,
-penalty-area corners, six-yard-box corners, halfway-line endpoints, and the
-tangencies of the centre circle and penalty arcs with their associated straight
-lines. The choice of keypoints follows the broadcast-football registration
-literature~\cite{Theiner2022, TVCalib2023}: each keypoint has a known
-real-world position in pitch coordinates, so any subset detected with sufficient
-confidence yields image-to-pitch correspondences directly usable in DLT.
+(\emph{pitch}) annotated with 32 keypoints corresponding to geometrically
+distinctive features formed by pitch markings: line intersections,
+penalty-area and six-yard-box corners, halfway-line endpoints, and tangencies
+of the centre circle and penalty arcs. The choice of landmark set follows the
+broadcast-football registration literature~\cite{Theiner2022, TVCalib2023};
+each keypoint has a known position in pitch coordinates, so any subset
+detected with sufficient confidence yields image-to-pitch correspondences
+directly usable in DLT.
 
 The detector was trained on the \textit{football\_field\_detection\_dataset}
-(Roboflow), comprising 317 broadcast frames split 255/34/28 across train,
-validation, and test partitions. Training used the same A100 hardware and
-Ultralytics 8.4.21 software stack as the detection models of
-Section~\ref{sec:methodology_detection}, with input resolution $640 \times 640$,
-batch size 48, and 500 epochs. One non-default choice deserves explicit comment:
+(Roboflow), comprising 317 broadcast frames split 255/34/28 across train/validation/test, using the same
+A100 hardware and Ultralytics 8.4.21 stack as the detection models of
+Section~\ref{sec:methodology_detection}. Training-time hyperparameters are
+catalogued in Section~\ref{subsec:methodology_reproducibility}, but one
+non-default choice is methodologically substantive enough to surface here:
 the mosaic augmentation that ships with the YOLO defaults was disabled
 (\texttt{mosaic}=0.0). Mosaic concatenates four training images into a single
-synthetic input, which is well-motivated for general object detection because it
-exposes the model to varied object scales and contexts, but the augmentation
-fragments the global geometric structure of a pitch into four disjoint quadrants.
-Since the discriminative signal for pitch-keypoint localisation is precisely the
-spatial relationships between landmarks --- a corner flag is identifiable in part
-because of its position relative to the goal line and the touchline ---
-fragmenting that structure trains the model on inputs whose geometry will never
-appear at inference. Disabling mosaic was therefore a deliberate departure from
-defaults, motivated by the structural mismatch between the augmentation and the
-fixed-landmark task.
+synthetic input, which is well-motivated for general object detection because
+it exposes the model to varied object scales and contexts, but the
+augmentation fragments the global geometric structure of a pitch into four
+disjoint quadrants. Since the discriminative signal for pitch-keypoint
+localisation is precisely the spatial relationships between landmarks --- a
+corner flag is identifiable in part because of its position relative to the
+goal line and the touchline --- fragmenting that structure trains the model on
+inputs whose geometry will never appear at inference. Disabling mosaic was
+therefore a deliberate departure from defaults motivated by the structural
+mismatch between the augmentation and the fixed-landmark task.
 
 The trained model achieves test detection mAP@50 of 0.995 (the pitch is, in
-practice, always present in broadcast frames, making detection nearly trivial)
-and test pose mAP@50 of 0.995 with mAP@50--95 of 0.953. Per-keypoint mean errors
-on the test set cluster around 4 pixels (approximately 0.4\% of the image
-diagonal), with one notable outlier: \texttt{kp\_16} averages 18.2 pixels,
-roughly four times the median. This outlier is reported honestly here because it
-will reappear in the evaluation discussion of homography stability in
-Chapter~\ref{ch:evaluation}; possible explanations include genuine annotation
-ambiguity at that landmark or sensitivity to camera angle, neither of which can
-be definitively resolved from the available evidence. A further caveat applies
-to keypoints that appear infrequently in the dataset --- \texttt{kp\_29} appears
-in only 9 training images and \texttt{kp\_15} in 233 --- so per-keypoint error
-estimates for the rarest landmarks are themselves estimated from very few test
-instances and should be treated with appropriate scepticism. This visibility
-imbalance is a structural property of broadcast footage rather than a dataset
-flaw: the far-side corners of the pitch are simply less frequently in shot than
-the near-side and central regions.
+practice, always present in broadcast frames) and test pose mAP@50 of 0.995
+with mAP@50--95 of 0.953. Per-keypoint mean errors cluster around four pixels
+on the test set, approximately 0.4\% of the image diagonal. One keypoint
+(\texttt{kp\_16}) is an outlier at 18.2 pixels, roughly four times the
+median; this is reported here for transparency and discussed alongside its
+downstream effect on homography stability in Chapter~\ref{ch:evaluation}.
+
+% \begin{figure}[!htbp]
+%     \centering
+%     \includegraphics[width=\linewidth]{images/pitch_keypoints_and_birdeye.png}
+%     \caption{Pitch registration in action. Left: a broadcast frame with the
+%     32 detected pitch keypoints overlaid. Right: the same frame rendered in
+%     pitch-space, with player positions projected through the homography
+%     estimated from the detected keypoints by Direct Linear Transform.}
+%     \label{fig:pitch_keypoints_and_birdeye}
+% \end{figure}
 
 \subsection{Stride-Cached Homography Estimation}
 \label{subsec:methodology_homography}
 
 Pitch keypoint inference is the slowest stage of the pipeline by a substantial
-margin: it involves a separate forward pass through a large pose model, often
-served via a remote inference endpoint. Running it on every frame would dominate
-end-to-end latency. Two observations make this unnecessary. First, broadcast
-camera motion is slow relative to frame rate --- a tactical camera pans and
-zooms over hundreds of milliseconds, not single-frame intervals. Second, the
-homography itself, once estimated from a stable set of keypoints, is robust to
-small camera movements. The pipeline exploits this by inferring keypoints only
+margin: a separate forward pass through a large pose model, served via a
+remote inference endpoint. Running it every frame would dominate end-to-end
+latency. Two observations make this unnecessary. First, broadcast camera
+motion is slow relative to frame rate --- a tactical camera pans over hundreds
+of milliseconds, not single-frame intervals. Second, the homography itself,
+once estimated from a stable set of keypoints, is robust to small camera
+movements. The pipeline exploits this by running keypoint inference only
 every \texttt{pitch\_stride}=15 frames, caching the resulting
-\texttt{ViewTransformer}, and reusing it for the intervening frames. At a 30\,fps
-input that corresponds to recomputing the homography twice per second, well above
-the rate of meaningful camera motion in broadcast football.
+\texttt{ViewTransformer}, and reusing it for the intervening frames. At
+30\,fps that recomputes the homography twice per second, well above the rate
+of meaningful camera motion in broadcast football.
 
 When inference does run, three thresholds gate the construction of a new
 homography. Each predicted keypoint must clear a per-keypoint confidence
 threshold of \texttt{kp\_conf}=0.5; the resulting set of confident keypoints
-must contain at least \texttt{min\_good\_kps}=6 entries; and the inference itself
-runs with a model-level confidence floor of 0.3. The 6-keypoint minimum is the
-most consequential of the three. The DLT system in Equation~\ref{eq:dlt_system}
-requires four non-collinear point correspondences for a unique homography, and
-six provides the redundancy that least-squares conditioning needs to suppress
-the per-keypoint localisation noise reported above without becoming numerically
-fragile. If insufficient confident keypoints are present in a particular
+must contain at least \texttt{min\_good\_kps}=6 entries; and the inference
+itself runs with a model-level confidence floor of 0.3. The 6-keypoint
+minimum is the most consequential of the three. The DLT system in
+Equation~\ref{eq:dlt_system} requires four non-collinear correspondences for
+a unique homography, and six provides redundancy that the least-squares
+solve uses to suppress per-keypoint localisation noise without becoming
+numerically fragile. If insufficient confident keypoints are present in an
 inference frame, the previous homography is retained rather than replaced ---
 the camera has not moved significantly in the intervening half-second, so the
-cached transform remains a reasonable approximation. The 0.5 confidence threshold
-on individual keypoints is calibrated to keep low-quality landmarks out of the
-correspondence set even when the overall model is confident a pitch is present.
+cached transform remains a reasonable approximation.
 
-The resulting \texttt{ViewTransformer} object exposes a vectorised
+The resulting \texttt{ViewTransformer} exposes a vectorised
 \texttt{transform\_points} method that maps any image-space coordinate into
-pitch-space using the cached homography, applied as the projective transformation
-of Equation~\ref{eq:homography_mapping} followed by the dehomogenisation of
+pitch-space, applying the projective transformation of
+Equation~\ref{eq:homography_mapping} followed by the dehomogenisation of
 Equation~\ref{eq:homography_dehomogenised}. Player anchors and the ball are
 projected through this method on every frame, supplying the pitch-space
-coordinates that the tactical reasoning stage of
-Section~\ref{sec:methodology_tactical} consumes. Whether the resulting
-projections support the qualitatively coherent tactical outputs required by
-success criterion~(iv) of Section~\ref{sec:aims} is the subject of
+coordinates that Section~\ref{sec:methodology_tactical} consumes. Whether the
+resulting projections support the qualitatively coherent tactical outputs
+required by success criterion~(iv) is reported in
 Chapter~\ref{ch:evaluation}.
+
+% \section{Tactical Reasoning}
+% \label{sec:methodology_tactical}
+
+% The four preceding sections produce, on every frame, a set of tracked players
+% with team labels and a set of confident pitch-space correspondences via the
+% cached homography. Tactical reasoning is the stage where these intermediates
+% become the analytical outputs that motivate the project: bird's-eye trajectories,
+% heatmaps, speed and distance estimates, possession assignments, pass events, and
+% offside flags. Every module described in this section operates in pitch-space
+% coordinates rather than image-space, in line with the ground-plane validity
+% argument of Section~\ref{subsec:background_player_projection}, and the modules
+% are presented in the order in which they consume each other's outputs. The
+% section addresses the fifth project objective in Section~\ref{sec:aims} and
+% provides the building blocks that success criterion~(iv) requires.
+
+% \subsection{Pitch-Space Projection}
+% \label{subsec:methodology_projection}
+
+% For each tracked player, the bottom-centre of the bounding box is taken as the
+% ground-plane anchor and projected through the cached homography using the
+% \texttt{ViewTransformer} of Section~\ref{sec:methodology_pitch}, following
+% Equation~\ref{eq:player_projection}. The bottom-centre choice is the standard
+% broadcast-analytics convention: it approximates the point at which the player's
+% feet meet the playing surface, which is the unique location on the bounding box
+% that lies on the ground plane and therefore satisfies the planar assumption of
+% the homography. The ball is projected from its detected centre. All downstream
+% modules consume these pitch-space coordinates, expressed in centimetres with the
+% pitch origin at one corner.
+
+% \subsection{Possession Tracking}
+% \label{subsec:methodology_possession}
+
+% Possession is assigned by nearest-eligible-player matching, in the formulation
+% of Equation~\ref{eq:nearest_ball_holder}: for each frame in which a ball
+% detection is available, the player whose pitch-space anchor lies closest to the
+% ball is identified, and possession is assigned to that player provided the
+% distance is at most \texttt{proximity\_cm}=350\,cm. Referees are excluded from
+% the eligibility set because they should never be in possession; the
+% team-classification stage of Section~\ref{sec:methodology_team} provides this
+% filter directly through its class labels. If no eligible player lies within the
+% threshold --- because the ball is in flight, has been kicked clear, or no
+% detection is available --- possession for that frame is left unassigned rather
+% than being attributed to the closest-but-still-distant player. The 350\,cm
+% threshold is large enough to absorb the combined effect of bounding-box anchor
+% error and homography projection noise, which together can shift a player's
+% estimated pitch position by tens of centimetres even when the underlying
+% detection is correct, while remaining small enough to disambiguate possession in
+% the typical congested-midfield scene.
+
+% \subsection{Pass Detection}
+% \label{subsec:methodology_passes}
+
+% Pass detection sits on top of possession assignment. Per-frame possession labels
+% are inherently noisy: a frame in which the ball is in flight between two players
+% can briefly attribute possession to a third player who happens to be near the
+% ball's trajectory, and a frame in which the dedicated ball detector fails can
+% break a stable possession run. The pipeline addresses this with a
+% hold-stability requirement: a player is considered to genuinely possess the
+% ball only after the per-frame label has named that player for at least
+% \texttt{min\_hold\_frames}=3 consecutive frames, and a pass is registered only
+% when stable possession transitions from one player to a distinct other.
+% Transitions that do not satisfy the stability requirement on either side are
+% discarded as transient noise.
+
+% The detection logic is implemented in the \texttt{\_PossessionTracker} class in
+% \texttt{offside.py}. A pass between two players on the same team is logged as a
+% \emph{pass}; a transition between players on opposing teams is logged as an
+% \emph{interception}. Both are written to the JSON event log with timestamps,
+% involved track identifiers, and team attributions, providing the structured
+% output that downstream tactical analysis consumes.
+
+% \subsection{Offside Detection}
+% \label{subsec:methodology_offside}
+
+% Offside detection extends the pass-detection module with the geometric criterion
+% formalised in Equation~\ref{eq:offside_basic}. The pipeline implements
+% \emph{positional} offside only --- the spatial component of Law~11 --- and does
+% not attempt to resolve the active-involvement clause, which depends on
+% behavioural cues that broadcast video alone does not reliably expose.
+
+% Two pieces of context are needed to evaluate the offside criterion: which team
+% is attacking in which direction, and where the second-last defender lies along
+% the attacking direction at the moment a pass is initiated. The attacking
+% direction is recovered automatically by the
+% \texttt{\_AttackDirectionEstimator} component, which accumulates pitch-space
+% $x$-coordinates of each team's players over the first
+% \texttt{direction\_min\_samples}=30 sampled frames and assigns the team with the
+% lower mean $x$ as attacking right (and vice versa). This estimator runs once
+% during the early phase of the video and the result is fixed for the remainder of
+% the match; the assumption that attacking direction does not change mid-half is
+% appropriate for a single-half clip, and a half-time switch would require
+% manual intervention or a second estimator pass. When the pass-detection module
+% of Section~\ref{subsec:methodology_passes} fires, the offside checker locates
+% the second-last defender of the receiving team along the attacking $x$-axis and
+% flags the receiving player as offside if their pitch-space $x$-coordinate is
+% beyond the defender's by more than \texttt{offside\_margin\_cm}=30\,cm. The
+% margin is a tolerance buffer that absorbs combined detection-and-projection
+% noise, preventing the system from flagging marginal frames in which a player
+% appears fractionally beyond the defender purely because of pixel-level
+% anchor error compounded by homography uncertainty.
+
+% Offside events trigger a visual annotation that persists for
+% \texttt{display\_frames}=50 frames after detection: the offending player's
+% bounding box is drawn in red, a red marker replaces the player's normal symbol
+% on the bird's-eye view, and a dashed red line is drawn at the offside
+% $x$-coordinate to indicate the defender's line. The 50-frame window
+% (approximately 1.7\,s at 30\,fps) gives the viewer time to interpret the event
+% without persisting so long that successive offsides overlap visually.
+
+% \subsection{Speed and Distance}
+% \label{subsec:methodology_speed}
+
+% Per-track speed and cumulative distance are computed by finite-differencing the
+% pitch-space anchor across consecutive frames, following the velocity formulation
+% of Equation~\ref{eq:velocity_pitch_space} and the distance accumulation of
+% Equation~\ref{eq:distance_pitch_space}. Speed is reported in km/h for display
+% and distance in metres for end-of-match summaries. A plausibility cap
+% (\texttt{max\_speed\_kmh}=40) rejects per-frame displacements that would imply
+% speeds beyond this threshold: elite sprinters peak around 35--37\,km/h, so
+% 40\,km/h leaves headroom above the realistic ceiling while remaining tight
+% enough to flag the kind of single-frame jumps that arise from track-identifier
+% swaps, bounding-box anchor jitter, or transient homography errors. Frames whose
+% finite-differenced speed exceeds the cap have their displacement contribution
+% zeroed out for that frame, which preserves the cumulative distance estimate
+% against single-frame noise spikes while accepting that genuine high-speed
+% movement above 40\,km/h --- which essentially does not occur in football --- will
+% also be rejected.
+
+% \subsection{Heatmaps}
+% \label{subsec:methodology_heatmaps}
+
+% Per-track positional heatmaps are accumulated on a pitch-space grid, following
+% the histogram construction of Equation~\ref{eq:heatmap_histogram}. The grid
+% defaults to $480 \times 280$ bins covering the full pitch, which gives a spatial
+% resolution of roughly $20 \times 25$\,cm per bin --- finer than the noise floor
+% of the projection pipeline and coarser than the per-frame jitter, so each bin
+% aggregates many frames of presence rather than acting as a noise multiplier. On
+% each frame, the bin containing each player's pitch-space anchor is incremented.
+% At the end of the video, each track's accumulated histogram is post-processed
+% for visualisation: a Gaussian smoothing pass is applied as in
+% Equation~\ref{eq:heatmap_smoothing}, followed by a $\gamma$ correction with
+% $\gamma=0.22$ to compress the dynamic range and emphasise less-visited regions
+% that would otherwise be invisible against the high-density area around a
+% player's positional centre. The $\gamma$ correction is a display choice rather
+% than a statistical operation, applied at save time to the rendered PNG; the raw
+% histogram is also written to disk as an NPY array so that downstream analysis
+% can operate on the unsmoothed counts.
 
 \section{Tactical Reasoning}
 \label{sec:methodology_tactical}
 
-The four preceding sections produce, on every frame, a set of tracked players
-with team labels and a set of confident pitch-space correspondences via the
-cached homography. Tactical reasoning is the stage where these intermediates
-become the analytical outputs that motivate the project: bird's-eye trajectories,
-heatmaps, speed and distance estimates, possession assignments, pass events, and
-offside flags. Every module described in this section operates in pitch-space
-coordinates rather than image-space, in line with the ground-plane validity
-argument of Section~\ref{subsec:background_player_projection}, and the modules
+The four preceding sections supply, on every frame, a set of tracked players
+with team labels and confident pitch-space correspondences. Tactical reasoning
+is the stage at which these intermediates become the analytical outputs that
+motivate the project: bird's-eye trajectories, heatmaps, speed and distance,
+possession assignments, pass events, and offside flags. All modules in this
+section operate in pitch-space coordinates, in line with the ground-plane
+validity argument of Section~\ref{subsec:background_player_projection}, and
 are presented in the order in which they consume each other's outputs. The
-section addresses the fifth project objective in Section~\ref{sec:aims} and
-provides the building blocks that success criterion~(iv) requires.
+section addresses FR5 and the fifth project objective of
+Section~\ref{sec:aims}.
 
 \subsection{Pitch-Space Projection}
 \label{subsec:methodology_projection}
 
-For each tracked player, the bottom-centre of the bounding box is taken as the
-ground-plane anchor and projected through the cached homography using the
-\texttt{ViewTransformer} of Section~\ref{sec:methodology_pitch}, following
+For each tracked player, the bottom-centre of the bounding box is taken as
+the ground-plane anchor and projected through the cached homography using
+the \texttt{ViewTransformer} of Section~\ref{sec:methodology_pitch}, following
 Equation~\ref{eq:player_projection}. The bottom-centre choice is the standard
-broadcast-analytics convention: it approximates the point at which the player's
-feet meet the playing surface, which is the unique location on the bounding box
-that lies on the ground plane and therefore satisfies the planar assumption of
-the homography. The ball is projected from its detected centre. All downstream
-modules consume these pitch-space coordinates, expressed in centimetres with the
-pitch origin at one corner.
+broadcast-analytics convention: it approximates the point where the player's
+feet meet the playing surface, which is the unique location on the bounding
+box that lies on the ground plane and therefore satisfies the homography's
+planar assumption. The ball is projected from its detected centre. All
+downstream modules consume these pitch-space coordinates, expressed in
+centimetres with the pitch origin at one corner.
 
 \subsection{Possession Tracking}
 \label{subsec:methodology_possession}
 
-Possession is assigned by nearest-eligible-player matching, in the formulation
-of Equation~\ref{eq:nearest_ball_holder}: for each frame in which a ball
-detection is available, the player whose pitch-space anchor lies closest to the
-ball is identified, and possession is assigned to that player provided the
-distance is at most \texttt{proximity\_cm}=350\,cm. Referees are excluded from
-the eligibility set because they should never be in possession; the
-team-classification stage of Section~\ref{sec:methodology_team} provides this
-filter directly through its class labels. If no eligible player lies within the
-threshold --- because the ball is in flight, has been kicked clear, or no
-detection is available --- possession for that frame is left unassigned rather
-than being attributed to the closest-but-still-distant player. The 350\,cm
-threshold is large enough to absorb the combined effect of bounding-box anchor
-error and homography projection noise, which together can shift a player's
-estimated pitch position by tens of centimetres even when the underlying
-detection is correct, while remaining small enough to disambiguate possession in
-the typical congested-midfield scene.
+Possession is assigned by nearest-eligible-player matching, in the
+formulation of Equation~\ref{eq:nearest_ball_holder}: for each frame in which
+a ball detection is available, the player whose pitch-space anchor lies
+closest to the ball is identified, and possession is assigned to that player
+provided the distance is at most \texttt{proximity\_cm}=350\,cm. Referees
+are excluded from the eligibility set because they should never be in
+possession; the team-classification stage of Section~\ref{sec:methodology_team}
+provides this filter through its class labels. If no eligible player lies
+within the threshold, possession for that frame is left unassigned rather
+than attributed to the nearest-but-still-distant player. The 350\,cm threshold
+absorbs the combined effect of bounding-box anchor error and homography
+projection noise, which together can shift a player's estimated pitch
+position by tens of centimetres even when the underlying detection is
+correct, while remaining small enough to disambiguate possession in the
+typical congested-midfield scene.
 
 \subsection{Pass Detection}
 \label{subsec:methodology_passes}
 
-Pass detection sits on top of possession assignment. Per-frame possession labels
-are inherently noisy: a frame in which the ball is in flight between two players
-can briefly attribute possession to a third player who happens to be near the
-ball's trajectory, and a frame in which the dedicated ball detector fails can
-break a stable possession run. The pipeline addresses this with a
-hold-stability requirement: a player is considered to genuinely possess the
-ball only after the per-frame label has named that player for at least
-\texttt{min\_hold\_frames}=3 consecutive frames, and a pass is registered only
-when stable possession transitions from one player to a distinct other.
-Transitions that do not satisfy the stability requirement on either side are
-discarded as transient noise.
+Pass detection sits on top of possession assignment. Per-frame possession
+labels are inherently noisy --- a frame in which the ball is in flight
+between two players can briefly attribute possession to a third player who
+happens to lie near the ball's trajectory, and a frame in which ball
+detection fails can break a stable possession run. The pipeline addresses
+this with a hold-stability requirement: a player is considered to genuinely
+possess the ball only after the per-frame label has named that player for at
+least \texttt{min\_hold\_frames}=3 consecutive frames, and a pass is
+registered only when stable possession transitions from one player to a
+distinct other. Transitions that fail the stability requirement on either
+side are discarded as transient noise.
 
-The detection logic is implemented in the \texttt{\_PossessionTracker} class in
-\texttt{offside.py}. A pass between two players on the same team is logged as a
-\emph{pass}; a transition between players on opposing teams is logged as an
-\emph{interception}. Both are written to the JSON event log with timestamps,
-involved track identifiers, and team attributions, providing the structured
-output that downstream tactical analysis consumes.
+The detection logic is implemented in the \texttt{\_PossessionTracker} class
+in \texttt{offside.py}. A transition between two players on the same team is
+logged as a \emph{pass}; a transition between players on opposing teams is
+logged as an \emph{interception}. Both are written to the JSON event log
+with the schema:
+
+\begin{lstlisting}[basicstyle=\small\ttfamily,frame=single,framerule=0.3pt]
+{ "frame_idx": int,
+  "passer_track_id": int,
+  "passer_team_id": int,
+  "ball_pitch_xy": [float, float] }
+\end{lstlisting}
 
 \subsection{Offside Detection}
 \label{subsec:methodology_offside}
 
-Offside detection extends the pass-detection module with the geometric criterion
-formalised in Equation~\ref{eq:offside_basic}. The pipeline implements
-\emph{positional} offside only --- the spatial component of Law~11 --- and does
-not attempt to resolve the active-involvement clause, which depends on
+Offside detection extends the pass-detection module with the geometric
+criterion of Equation~\ref{eq:offside_basic}. The pipeline implements
+\emph{positional} offside only --- the spatial component of Law~11 --- and
+does not attempt to resolve the active-involvement clause, which depends on
 behavioural cues that broadcast video alone does not reliably expose.
 
-Two pieces of context are needed to evaluate the offside criterion: which team
-is attacking in which direction, and where the second-last defender lies along
-the attacking direction at the moment a pass is initiated. The attacking
-direction is recovered automatically by the
-\texttt{\_AttackDirectionEstimator} component, which accumulates pitch-space
-$x$-coordinates of each team's players over the first
-\texttt{direction\_min\_samples}=30 sampled frames and assigns the team with the
-lower mean $x$ as attacking right (and vice versa). This estimator runs once
-during the early phase of the video and the result is fixed for the remainder of
-the match; the assumption that attacking direction does not change mid-half is
-appropriate for a single-half clip, and a half-time switch would require
-manual intervention or a second estimator pass. When the pass-detection module
-of Section~\ref{subsec:methodology_passes} fires, the offside checker locates
-the second-last defender of the receiving team along the attacking $x$-axis and
-flags the receiving player as offside if their pitch-space $x$-coordinate is
-beyond the defender's by more than \texttt{offside\_margin\_cm}=30\,cm. The
-margin is a tolerance buffer that absorbs combined detection-and-projection
-noise, preventing the system from flagging marginal frames in which a player
+Two pieces of context are required: the attacking direction of each team and
+the location of the second-last defender at the moment a pass is initiated.
+The attacking direction is recovered automatically by
+\texttt{\_AttackDirectionEstimator}, which accumulates pitch-space
+$x$-coordinates of each team over the first
+\texttt{direction\_min\_samples}=30 sampled frames and assigns the team with
+the lower mean $x$ as attacking right (and vice versa). The estimator runs once during the
+early phase of the video and the result is fixed thereafter; mid-half
+direction switches are out of scope and are recorded as a known limitation in
+Section~\ref{sec:methodology_failure_handling}. When the pass-detection
+module fires, the offside checker locates the second-last defender of the defending 
+team along the attacking $x$-axis and flags the receiver as offside
+if their pitch-space $x$-coordinate is beyond the defender's by more than
+\texttt{offside\_margin\_cm}=30\,cm. The margin absorbs combined
+detection-and-projection noise, preventing flags on plays where a player
 appears fractionally beyond the defender purely because of pixel-level
 anchor error compounded by homography uncertainty.
 
 Offside events trigger a visual annotation that persists for
-\texttt{display\_frames}=50 frames after detection: the offending player's
-bounding box is drawn in red, a red marker replaces the player's normal symbol
-on the bird's-eye view, and a dashed red line is drawn at the offside
-$x$-coordinate to indicate the defender's line. The 50-frame window
-(approximately 1.7\,s at 30\,fps) gives the viewer time to interpret the event
-without persisting so long that successive offsides overlap visually.
+\texttt{display\_frames}=50 frames (approximately 1.7\,s at 30\,fps): the
+offending player's box is drawn red on the broadcast frame, marked red on the
+bird's-eye view, and a dashed red line is drawn at the offside
+$x$-coordinate to indicate the defender's line.
+Each event is logged with the schema:
+
+\begin{lstlisting}[basicstyle=\small\ttfamily,frame=single,framerule=0.3pt]
+{ "frame_idx": int,
+  "pass_event": { ... pass-event fields above ... },
+  "offside_line_x": float,
+  "offside_players": [
+    { "track_id": int, "pitch_xy": [float, float] }, ...
+  ] }
+\end{lstlisting}
 
 \subsection{Speed and Distance}
 \label{subsec:methodology_speed}
 
-Per-track speed and cumulative distance are computed by finite-differencing the
-pitch-space anchor across consecutive frames, following the velocity formulation
-of Equation~\ref{eq:velocity_pitch_space} and the distance accumulation of
-Equation~\ref{eq:distance_pitch_space}. Speed is reported in km/h for display
-and distance in metres for end-of-match summaries. A plausibility cap
-(\texttt{max\_speed\_kmh}=40) rejects per-frame displacements that would imply
-speeds beyond this threshold: elite sprinters peak around 35--37\,km/h, so
-40\,km/h leaves headroom above the realistic ceiling while remaining tight
-enough to flag the kind of single-frame jumps that arise from track-identifier
-swaps, bounding-box anchor jitter, or transient homography errors. Frames whose
-finite-differenced speed exceeds the cap have their displacement contribution
-zeroed out for that frame, which preserves the cumulative distance estimate
-against single-frame noise spikes while accepting that genuine high-speed
-movement above 40\,km/h --- which essentially does not occur in football --- will
-also be rejected.
+Per-track speed and cumulative distance are computed by finite-differencing
+the pitch-space anchor across consecutive frames, following the velocity
+formulation of Equation~\ref{eq:velocity_pitch_space} and the distance
+accumulation of Equation~\ref{eq:distance_pitch_space}. Speed is reported in
+km/h and distance in metres in the per-player block of the stats JSON
+(\texttt{distance\_m}, \texttt{avg\_speed\_kmh}, \texttt{max\_speed\_kmh}). A
+plausibility cap (\texttt{max\_speed\_kmh}=40) rejects per-frame
+displacements implying speeds beyond this threshold: elite sprinters peak
+around 35--37\,km/h, so 40\,km/h leaves headroom above the realistic ceiling
+while still flagging single-frame jumps from tracking and projection noise.
+Frames whose finite-differenced speed exceeds the cap have their
+displacement contribution zeroed for that frame, preserving the cumulative
+distance estimate against single-frame noise spikes at the cost of also
+rejecting genuine high-speed motion above 40\,km/h --- a regime that
+essentially does not occur in football.
 
 \subsection{Heatmaps}
 \label{subsec:methodology_heatmaps}
 
-Per-track positional heatmaps are accumulated on a pitch-space grid, following
-the histogram construction of Equation~\ref{eq:heatmap_histogram}. The grid
-defaults to $480 \times 280$ bins covering the full pitch, which gives a spatial
-resolution of roughly $20 \times 25$\,cm per bin --- finer than the noise floor
-of the projection pipeline and coarser than the per-frame jitter, so each bin
-aggregates many frames of presence rather than acting as a noise multiplier. On
-each frame, the bin containing each player's pitch-space anchor is incremented.
-At the end of the video, each track's accumulated histogram is post-processed
-for visualisation: a Gaussian smoothing pass is applied as in
-Equation~\ref{eq:heatmap_smoothing}, followed by a $\gamma$ correction with
-$\gamma=0.22$ to compress the dynamic range and emphasise less-visited regions
-that would otherwise be invisible against the high-density area around a
-player's positional centre. The $\gamma$ correction is a display choice rather
-than a statistical operation, applied at save time to the rendered PNG; the raw
+Per-track positional heatmaps are accumulated on a pitch-space grid,
+following the histogram construction of Equation~\ref{eq:heatmap_histogram}.
+The grid defaults to $480 \times 280$ bins covering the full pitch, giving a
+spatial resolution of roughly $20 \times 25$\,cm per bin --- finer than the
+projection-pipeline noise floor and coarser than per-frame jitter, so each
+bin aggregates many frames of presence rather than acting as a noise
+multiplier. On each frame the bin containing each player's pitch-space
+anchor is incremented. At the end of the video, each track's accumulated
+histogram is post-processed: a Gaussian smoothing pass is applied as in
+Equation~\ref{eq:heatmap_smoothing}, followed by a $\gamma=0.22$ correction
+to compress dynamic range and reveal less-visited regions. The $\gamma$
+correction is a display choice rather than a statistical operation: the raw
 histogram is also written to disk as an NPY array so that downstream analysis
 can operate on the unsmoothed counts.
 
-\section{System Engineering}
+% \begin{figure}[!htbp]
+%     \centering
+%     \includegraphics[width=0.7\linewidth]{images/heatmap_example.png}
+%     \caption{Per-track positional heatmap for a single player accumulated
+%     over a clip, rendered on a pitch silhouette. Brighter regions correspond
+%     to higher temporal occupancy. The Gaussian smoothing and $\gamma$
+%     correction described in the text are applied at save time; the underlying
+%     NPY histogram preserves the raw bin counts.}
+%     \label{fig:heatmap_example}
+% \end{figure}
+
+\section{Implementation Testing and Verification}
+\label{sec:methodology_testing}
+
+The development methodology of Section~\ref{sec:development_methodology}
+emphasises component-level isolation specifically because errors in any
+upstream stage propagate through every downstream tactical output. Verifying
+each component in isolation, on representative input, before relying on it
+in the integrated pipeline was therefore essential rather than optional.
+
+The verification performed during development is summarised in
+Table~\ref{tab:implementation_testing}. None of these procedures constitute
+formal automated testing in the sense of a continuous integration suite;
+rather, they are the deliberate inspection steps that the development loop
+produced as each component was integrated. Quantitative evaluation of the
+final integrated system against the success criteria of
+Section~\ref{sec:aims} is reported separately in
+Chapter~\ref{ch:evaluation}.
+
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{p{3.0cm}p{6.4cm}p{4.0cm}}
+\toprule
+\textbf{Component} & \textbf{Verification performed} & \textbf{Purpose} \\
+\midrule
+Detection pipeline & Visual inspection of bounding-box overlays on sampled frames; class-filter and confidence-threshold behaviour confirmed against schema. & Confirms downstream modules receive valid, correctly-classed detections. \\
+Ball filter & Spot checks on clips with detection gaps and on clips with rapid ball motion; verified that displacement-gate rejection produced expected behaviour. & Confirms the temporal filter rejects implausible candidates without suppressing legitimate motion. \\
+Team classifier (warmup) & Inspection of the fitted UMAP projection and KMeans cluster boundary on the warmup crop set; confirmed both teams recovered as separated clusters. & Confirms the warmup-phase fit produces a usable two-team boundary before per-frame prediction begins. \\
+Track-level smoothing & Comparison of raw per-frame versus smoothed team labels for a sample of tracks across the development clips. & Confirms smoothing reduces frame-level noise without lagging genuine track-identifier changes. \\
+Homography estimator & Verified that projected pitch coordinates of detected players fall within the pitch bounds for the majority of frames; manual inspection of the bird's-eye view for sanity. & Detects ill-conditioned or failed homography fits that would otherwise corrupt downstream analytics. \\
+Possession module & Frame-level inspection of nearest-player assignments on possession-of-ball sequences from development clips. & Confirms proximity-based assignment behaves as intended in congested midfield scenes. \\
+Pass and offside detection & Manual inspection of detected pass and offside events against the source footage. & Distinguishes genuine passes from possession noise; confirms the offside criterion fires only at pass moments. \\
+Output generation & Verified that all four output formats (annotated MP4, bird's-eye MP4, heatmap PNGs, JSON event log and stats) are produced for each run-mode preset. & Ensures end-to-end pipeline completeness across all modes. \\
+\bottomrule
+\end{tabular}
+\caption{Component-level verification performed during development. Each row
+describes a deliberate inspection step performed before the corresponding
+component was relied on in the integrated pipeline. Quantitative evaluation
+is reported separately in Chapter~\ref{ch:evaluation}.}
+\label{tab:implementation_testing}
+\end{table}
+
+% \section{System Engineering}
+% \label{sec:methodology_system}
+
+% The modules described in the preceding sections are integrated through a single
+% orchestration script (\texttt{run.py}) that exposes the pipeline as a
+% command-line tool. The implementation follows a modular layout under
+% \texttt{src/}, with one subpackage per processing stage --- \texttt{ball/},
+% \texttt{heatmap/}, \texttt{pitch/}, \texttt{stats/}, \texttt{team/}, and
+% \texttt{pipeline/} --- so that each component can be modified, tested, or
+% replaced independently. The tracker is a particularly clean instance of this
+% modularity: switching between ByteTrack and BoT-SORT requires only a different
+% configuration filename passed to the Ultralytics tracker interface, with no
+% changes elsewhere in the codebase.
+
+% Execution proceeds in two phases. The warmup phase of
+% Section~\ref{subsec:methodology_warmup} runs once at the start of each video,
+% fitting the team-classification model on a representative crop set; the
+% per-frame loop then iterates through the remaining frames in the order shown in
+% Figure~\ref{fig:pipeline_overview}. Separating the two phases is essential
+% because the team classifier must be fitted before any per-frame team labels can
+% be produced, and fitting cannot itself be done frame-by-frame for the cluster
+% stability reasons discussed in Section~\ref{subsec:methodology_warmup}. The
+% two-phase structure also provides a natural place to log fitting diagnostics
+% without polluting the per-frame logging stream.
+
+% Several caching layers are used to amortise computational cost. Pitch keypoint
+% inference is cached every 15 frames as described in
+% Section~\ref{subsec:methodology_homography}; the previous ball position is
+% maintained as a one-frame cache for the temporal coherence filter of
+% Section~\ref{sec:methodology_detection}; per-track team-prediction history is
+% held in a 30-frame deque for the smoothing of
+% Section~\ref{subsec:methodology_team_smoothing}; and the cumulative heatmap
+% arrays are accumulated in memory for the duration of the video before being
+% written to disk. None of the caches are large in absolute terms --- the
+% heatmap arrays dominate at $480 \times 280$ floats per active track --- and the
+% pipeline runs in a single process without explicit memory management beyond
+% Python's reference counting.
+
+% The output format reflects the dual audience for the pipeline's results. An
+% annotated MP4 and a bird's-eye-view MP4 are written for human inspection,
+% allowing visual sanity checks and use as illustrative material. Per-track
+% heatmap PNGs are produced for the same purpose. For machine consumption, the
+% raw heatmap arrays are also saved as NPY files, and detected pass and offside
+% events together with per-player match statistics are serialised to JSON. The
+% JSON outputs are the inputs that Chapter~\ref{ch:evaluation} consumes when
+% quantitatively assessing the tactical-output quality required by success
+% criterion~(iv) of Section~\ref{sec:aims}.
+
+% Operational ergonomics are handled by a wrapper shell script (\texttt{run.sh})
+% that exposes mode presets --- \texttt{preview} for short test clips,
+% \texttt{full} for end-to-end processing of complete matches, and \texttt{debug}
+% for verbose intermediate logging --- so that common invocations do not require
+% the user to remember the underlying argument set. A separate Streamlit interface
+% provides a graphical front-end for non-technical users, accepting a video
+% upload and surfacing the same set of outputs that the command-line entry point
+% produces. The Streamlit interface is not the primary deliverable but is
+% included as a demonstration that the pipeline can be packaged for use beyond
+% the development environment.
+
+% End-to-end runtime characteristics are reported in Chapter~\ref{ch:evaluation}.
+
+\section{System Engineering and Reproducibility}
 \label{sec:methodology_system}
 
-The modules described in the preceding sections are integrated through a single
-orchestration script (\texttt{run.py}) that exposes the pipeline as a
+\subsection{Pipeline Orchestration}
+\label{subsec:methodology_orchestration}
+
+The modules described in the preceding sections are integrated through a
+single orchestration script (\texttt{run.py}) that exposes the pipeline as a
 command-line tool. The implementation follows a modular layout under
 \texttt{src/}, with one subpackage per processing stage --- \texttt{ball/},
 \texttt{heatmap/}, \texttt{pitch/}, \texttt{stats/}, \texttt{team/}, and
 \texttt{pipeline/} --- so that each component can be modified, tested, or
-replaced independently. The tracker is a particularly clean instance of this
+replaced independently. The tracker swap is the cleanest instance of this
 modularity: switching between ByteTrack and BoT-SORT requires only a different
 configuration filename passed to the Ultralytics tracker interface, with no
-changes elsewhere in the codebase.
+changes elsewhere in the codebase, satisfying NFR1 of
+Table~\ref{tab:methodology_requirements}.
 
 Execution proceeds in two phases. The warmup phase of
-Section~\ref{subsec:methodology_warmup} runs once at the start of each video,
-fitting the team-classification model on a representative crop set; the
-per-frame loop then iterates through the remaining frames in the order shown in
-Figure~\ref{fig:pipeline_overview}. Separating the two phases is essential
-because the team classifier must be fitted before any per-frame team labels can
-be produced, and fitting cannot itself be done frame-by-frame for the cluster
-stability reasons discussed in Section~\ref{subsec:methodology_warmup}. The
-two-phase structure also provides a natural place to log fitting diagnostics
-without polluting the per-frame logging stream.
+Section~\ref{subsec:methodology_warmup} runs once at the start of each video
+to fit the team-classification model on a representative crop set; the
+per-frame loop then iterates through the remaining frames in the order shown
+in Figure~\ref{fig:pipeline_overview}. The two-phase structure is required by
+the cluster-stability argument of Section~\ref{subsec:methodology_warmup} and
+provides a natural place to log fitting diagnostics separately from per-frame
+output.
 
-Several caching layers are used to amortise computational cost. Pitch keypoint
-inference is cached every 15 frames as described in
-Section~\ref{subsec:methodology_homography}; the previous ball position is
-maintained as a one-frame cache for the temporal coherence filter of
-Section~\ref{sec:methodology_detection}; per-track team-prediction history is
-held in a 30-frame deque for the smoothing of
-Section~\ref{subsec:methodology_team_smoothing}; and the cumulative heatmap
-arrays are accumulated in memory for the duration of the video before being
-written to disk. None of the caches are large in absolute terms --- the
-heatmap arrays dominate at $480 \times 280$ floats per active track --- and the
-pipeline runs in a single process without explicit memory management beyond
-Python's reference counting.
+Several caching layers amortise computational cost: pitch keypoint inference
+is cached every fifteen frames
+(Section~\ref{subsec:methodology_homography}); the previous ball position is
+held as a one-frame cache for the temporal coherence filter
+(Section~\ref{sec:methodology_detection}); per-track team-prediction history
+is held in a thirty-frame deque
+(Section~\ref{subsec:methodology_team_smoothing}); and per-track heatmap
+arrays are accumulated in memory until end-of-video. The heatmap arrays are
+the largest cache at $480 \times 280$ floats per active track and remain
+modest in absolute terms, so the pipeline runs in a single Python process
+without explicit memory management.
 
-The output format reflects the dual audience for the pipeline's results. An
-annotated MP4 and a bird's-eye-view MP4 are written for human inspection,
-allowing visual sanity checks and use as illustrative material. Per-track
-heatmap PNGs are produced for the same purpose. For machine consumption, the
-raw heatmap arrays are also saved as NPY files, and detected pass and offside
-events together with per-player match statistics are serialised to JSON. The
-JSON outputs are the inputs that Chapter~\ref{ch:evaluation} consumes when
-quantitatively assessing the tactical-output quality required by success
-criterion~(iv) of Section~\ref{sec:aims}.
+\subsection{Output Formats}
+\label{subsec:methodology_outputs}
 
-Operational ergonomics are handled by a wrapper shell script (\texttt{run.sh})
-that exposes mode presets --- \texttt{preview} for short test clips,
-\texttt{full} for end-to-end processing of complete matches, and \texttt{debug}
-for verbose intermediate logging --- so that common invocations do not require
-the user to remember the underlying argument set. A separate Streamlit interface
-provides a graphical front-end for non-technical users, accepting a video
-upload and surfacing the same set of outputs that the command-line entry point
-produces. The Streamlit interface is not the primary deliverable but is
-included as a demonstration that the pipeline can be packaged for use beyond
-the development environment.
+The output format reflects the dual audience for the pipeline's results,
+satisfying NFR3. An annotated MP4 and a bird's-eye-view MP4 are produced for
+human inspection; per-track heatmap PNGs serve the same purpose. For machine
+consumption, the raw heatmap counts are also exported as NPY arrays, and
+detected pass and offside events together with per-player match statistics
+are serialised to JSON using the schemas of
+Section~\ref{sec:methodology_tactical}. The JSON outputs are the inputs that
+Chapter~\ref{ch:evaluation} consumes for quantitative assessment of success
+criterion~(iv).
 
-End-to-end runtime characteristics are reported in Chapter~\ref{ch:evaluation}.
+Operational ergonomics are handled by a wrapper shell script
+(\texttt{run.sh}) that exposes mode presets --- \texttt{preview} for short
+test clips, \texttt{full} for end-to-end processing of complete matches, and
+\texttt{debug} for verbose intermediate logging --- so that common
+invocations do not require remembering the underlying argument set. A
+separate Streamlit interface provides a graphical front-end accepting a video
+upload and surfacing the same outputs as the command-line entry point,
+included as a demonstration that the pipeline can be packaged for use
+beyond the development environment.
+
+\subsection{Reproducibility}
+\label{subsec:methodology_reproducibility}
+
+Three categories of reproducibility commitment apply to the pipeline,
+satisfying NFR2.
+
+\paragraph{Environment.} Training was carried out on an NVIDIA A100-SXM4-80GB
+GPU using Python~3.11, Ultralytics~8.4.21, PyTorch~2.8.0, and CUDA~12.8;
+inference is intended for and developed against an Apple~M2 Pro (no discrete
+GPU). The pipeline runs end-to-end in a single Python process without
+multi-GPU coordination, simplifying the inference environment.
+
+\paragraph{Models, datasets, and configuration.} Three YOLO models are
+fine-tuned by this project: the four-class generic detector
+(Section~\ref{sec:methodology_detection}), the dedicated ball detector
+(Section~\ref{sec:methodology_detection}), and the pitch-keypoint detector
+(Section~\ref{sec:methodology_pitch}). Each is trained on a publicly
+available Roboflow dataset (\textit{Football\_object\_detection\_dataset},
+\textit{ball\_dataset}, and \textit{football\_field\_detection\_dataset}
+respectively), with hyperparameters as reported in the corresponding sections. Trained weights are
+saved locally; the keypoint detector is additionally served via Roboflow's
+serverless inference endpoint at runtime. All pipeline-level hyperparameters
+discussed throughout this chapter are exposed as command-line arguments by
+\texttt{run.py}, with mode-specific defaults in \texttt{run.sh}.
+
+\paragraph{Limitations.} Two aspects of the pipeline cannot be reproduced
+bit-exactly: random initialisation in YOLO training was not seeded, so
+re-running the training procedure will produce numerically distinct (but
+behaviourally equivalent) weights, and the Roboflow-hosted inference endpoint
+is a third-party service whose identical availability cannot be guaranteed
+into the future. Local deployment of the keypoint model on the trained
+weights is supported as a fallback for replicators without the hosted
+endpoint.
+
+\section{Design Decisions and Failure Handling}
+\label{sec:methodology_failure_handling}
+
+The previous sections have justified each component-level design decision in
+the context where the decision was made. To support the marker in seeing the
+overall design rationale at a glance --- and to make the system's known
+limitations explicit rather than dispersed --- this section consolidates
+both. Table~\ref{tab:key_design_decisions} lists the principal architectural
+decisions with their considered alternatives and trade-offs;
+Table~\ref{tab:failure_handling} records the failure conditions the pipeline
+is designed to absorb gracefully, the mitigation strategy in each case, and
+the residual limitation that the mitigation does not fully resolve.
+
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{p{3.4cm}p{2.8cm}p{4.0cm}p{3.6cm}}
+\toprule
+\textbf{Decision} & \textbf{Alternative} & \textbf{Rationale} & \textbf{Trade-off} \\
+\midrule
+Two-detector architecture & Single multi-class detector & 49\,pp ball-class mAP@50 improvement on the same task (§\ref{sec:methodology_detection}). & Second inference pass per frame. \\
+Mosaic disabled for keypoint training & Default Ultralytics augmentation & Pitch geometry has fixed structure that mosaic fragments into disjoint quadrants (§\ref{sec:methodology_pitch}). & Fewer augmented training samples; longer training to convergence. \\
+Stride-15 cached homography & Per-frame keypoint inference & Keypoint inference dominates pipeline latency; broadcast camera motion is slow (§\ref{sec:methodology_pitch}). & Brief projection drift during rapid camera moves. \\
+$k=2$ team clusterer + spatial GK resolver & Three-cluster team model & $k=3$ on a heavily two-team-dominated crop set is poorly conditioned (§\ref{sec:methodology_team}). & Requires a separate goalkeeper-handling pathway. \\
+Fit-once warmup clustering & Per-frame or incremental refit & Cluster boundary stability; avoids label flip-flop from drifting boundary (§\ref{subsec:methodology_warmup}). & No adaptation to mid-match visual change. \\
+Track-level team smoothing & Per-detection prediction & Team identity is a constant property of a track; absorbs frame-level prediction noise (§\ref{subsec:methodology_team_smoothing}). & One-second latency in reacting to genuine track-identifier changes. \\
+Positional offside only & Full Law~11 modelling including active involvement & Active involvement depends on behavioural cues that broadcast video does not reliably expose (§\ref{subsec:methodology_offside}). & Cannot distinguish active from passive offside positions. \\
+Image-space GK centroid resolution & Pitch-space resolution & Functions before homography is valid; preserves goalkeeper assignment when keypoints are insufficient (§\ref{subsec:methodology_gk_resolver}). & Implicit assumption of side-on broadcast camera angle. \\
+\bottomrule
+\end{tabular}
+\caption{Principal architectural decisions, their considered alternatives, and
+the trade-offs each decision accepts.}
+\label{tab:key_design_decisions}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{p{4.2cm}p{4.6cm}p{4.4cm}}
+\toprule
+\textbf{Failure condition} & \textbf{Mitigation strategy} & \textbf{Residual limitation} \\
+\midrule
+Ball not detected in a frame & Possession is left unassigned for that frame rather than imputed. & Passes may be missed during sustained ball-detection gaps. \\
+Implausible ball position jump & Temporal-coherence filter rejects the candidate; previous ball position is retained. & Genuine high-speed ball motion can be suppressed alongside noise. \\
+Insufficient confident pitch keypoints & Previous cached homography is retained rather than replaced. & Projection drift accumulates during sequences of failed inference. \\
+Track identifier lost or replaced & Track-level smoothing absorbs short label noise; new identifier starts fresh. & Per-track heatmaps and statistics may fragment when tracks split. \\
+Goalkeeper visually similar to an outfield kit & Spatial GK resolver assigns to nearest team centroid in image-space. & Fails for behind-the-goal camera angles. \\
+Half-time attacking-direction switch & Direction estimator runs once early; result is fixed thereafter. & Manual intervention or a re-run is required to handle full-match clips. \\
+Single-frame anomalous speed (e.g.\ track-id swap) & 40\,km/h plausibility cap zeroes the displacement contribution for that frame. & Genuine motion above the cap is also rejected, though this regime does not occur in football. \\
+\bottomrule
+\end{tabular}
+\caption{Failure conditions handled by the pipeline, the corresponding
+mitigation strategy, and the residual limitation that the mitigation does
+not fully address. The half-time direction-switch row resolves the forward
+reference made in Section~\ref{subsec:methodology_offside}.}
+\label{tab:failure_handling}
+\end{table}
+
+The decisions and limitations recorded above set the scope within which the
+quantitative evaluation of Chapter~\ref{ch:evaluation} should be read: the
+pipeline is designed to absorb these failure modes gracefully rather than
+to eliminate them, and the success criteria of Section~\ref{sec:aims} are
+assessed against this scoped behaviour.
