@@ -559,6 +559,18 @@ insufficient confident keypoints. The trade-off relies on the implicit assumptio
 that the two teams' centroids project to distinguishable image-space locations, 
 which is valid for the side-on tactical-camera angles that dominate football broadcasts.
 
+Figure~\ref{fig:gk_resolver_frame} illustrates this image-space assignment rule.
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.88\linewidth]{images/03-methodology/gk_resolver_frame.png}
+    \caption{Image-space goalkeeper resolution on a broadcast frame. Outfield
+    players are first assigned to teams and each team's image-space centroid is
+    computed. The goalkeeper is then assigned to the nearest outfield-team
+    centroid, avoiding reliance on goalkeeper kit colour for team classification.}
+    \label{fig:gk_resolver_frame}
+\end{figure}
+
 Whether the assembled team-classification stack meets success criterion~(iii)
 of Section~\ref{sec:aims} (F1 $\geq 0.85$) is reported in
 Chapter~\ref{ch:evaluation}.
@@ -628,6 +640,8 @@ on the test set, approximately 0.4\% of the image diagonal. One keypoint
 (\texttt{kp\_16}) is an outlier at 18.2 pixels, roughly four times the
 median; this is reported here for transparency and discussed alongside its
 downstream effect on homography stability in Chapter~\ref{ch:evaluation}.
+
+Figure~\ref{fig:pitch_keypoints_and_birdeye} illustrates this registration step.
 
 \begin{figure}[!htbp]
     \centering
