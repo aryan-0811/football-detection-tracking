@@ -225,6 +225,19 @@ This pattern --- high precision on the three large-object classes paired with
 a recall collapse on the ball --- is the diagnostic evidence that motivated a
 separate ball detector.
 
+Figure~\ref{fig:generic_detector_output} shows a representative frame annotated by the generic four-class detector.
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.92\linewidth]{images/03-methodology/generic_detector_output.png}
+    \caption{Representative output of the generic four-class detector. The model
+    localises players, goalkeepers and referees in broadcast footage, providing
+    the person detections used by the downstream tracking and team-classification
+    stages. Although the detector also predicts a ball class, ball localisation in
+    the final pipeline is handled by the dedicated ball detector.}
+    \label{fig:generic_detector_output}
+\end{figure}
+
 \subsection{Dedicated Ball Detector}
 \label{subsec:methodology_ball_detector}
 
@@ -261,18 +274,41 @@ gating that the permissive detector threshold defers to. The filter relies on
 the dedicated detector producing a high-recall set of candidates per frame, a
 behaviour the generic detector cannot reliably provide.
 
-Figure~\ref{fig:ball_temporal_filter} illustrates this candidate gating process.
+Figure~\ref{fig:ball_temporal_filter} illustrates this candidate-gating process.
 
 \begin{figure}[!htbp]
     \centering
-    \includegraphics[width=\linewidth]{images/03-methodology/ball_temporal_filtering.png}
-    \caption{Temporal coherence filtering for the dedicated ball detector.
-      (a) A permissive threshold ($\mathrm{conf} \geq 0.05$) preserves multiple ball
-      candidates in frame $t$. (b) The accepted ball position from frame $t-1$
-      defines an 80-pixel displacement gate. (c) The candidate with confidence 0.57
-      is retained as the temporally plausible observation for frame $t$. This
-      post-processing step improves recall while preventing isolated false positives
-      from corrupting possession, pass and offside reasoning.}
+
+    \begin{subfigure}[t]{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/03-methodology/ball_filter_candidates.png}
+        \caption{Frame $t$ --- all candidates ($\mathrm{conf}\geq 0.05$).}
+        \label{fig:ball_filter_candidates}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/03-methodology/ball_filter_gate.png}
+        \caption{Frame $t-1$ --- prior position and displacement gate.}
+        \label{fig:ball_filter_gate}
+    \end{subfigure}
+
+    \vspace{0.75em}
+
+    \begin{subfigure}[t]{0.58\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/03-methodology/ball_filter_selected.png}
+        \caption{Frame $t$ --- selected position after temporal filtering.}
+        \label{fig:ball_filter_selected}
+    \end{subfigure}
+
+    \caption{Temporal coherence filtering for the dedicated ball detector. A
+    permissive detector threshold preserves multiple candidate ball detections,
+    after which the previously accepted ball position defines an 80-pixel
+    displacement gate. The candidate that remains both spatially plausible and
+    sufficiently confident is retained as the ball observation for frame $t$.
+    This post-processing step improves recall while suppressing isolated false
+    positives before possession, pass and offside reasoning are applied.}
     \label{fig:ball_temporal_filter}
 \end{figure}
 
@@ -595,11 +631,25 @@ downstream effect on homography stability in Chapter~\ref{ch:evaluation}.
 
 \begin{figure}[!htbp]
     \centering
-    \includegraphics[width=\linewidth]{images/03-methodology/homography_registration.png}
-    \caption{Pitch registration in action. Left: a broadcast frame with the
-    detected pitch keypoints overlaid. Right: the same frame rendered in
-    pitch-space, with player positions projected through the homography
-    estimated from the detected keypoints by Direct Linear Transform.}
+
+    \begin{subfigure}[t]{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/03-methodology/pitch_keypoints_frame.png}
+        \caption{Detected pitch keypoints in the broadcast frame.}
+        \label{fig:pitch_keypoints_frame}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/03-methodology/pitch_projection_birdeye.png}
+        \caption{Pitch-space projection obtained from the estimated homography.}
+        \label{fig:pitch_projection_birdeye}
+    \end{subfigure}
+
+    \caption{Pitch registration in action. Detected pitch keypoints are used to
+    estimate a homography via Direct Linear Transform, enabling image-space
+    detections to be projected into pitch coordinates for bird's-eye-view
+    rendering and downstream tactical analysis.}
     \label{fig:pitch_keypoints_and_birdeye}
 \end{figure}
 
