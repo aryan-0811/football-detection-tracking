@@ -24,7 +24,7 @@ Figure~\ref{fig:pipeline_overview}.
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=\linewidth]{images/03-methodology/pipeline_overview.png}
-    \caption{Pipeline architecture. Three parallel branches process each frame:
+    \caption[Pipeline architecture overview.]{Pipeline architecture. Three parallel branches process each frame:
     a generic object detector with multi-object tracker producing per-frame
     player and referee detections that are then assigned to teams (left); a
     dedicated ball detector with a temporal coherence filter (centre); and a
@@ -88,7 +88,7 @@ follows the order of Figure~\ref{fig:pipeline_overview}.
 8 & Event log                & passes, offsides, per-track statistics            & Tactical reasoning modules (§\ref{sec:methodology_tactical})   & JSON outputs; Ch.~\ref{ch:evaluation} \\
 \bottomrule
 \end{tabular}
-\caption{Intermediate representations passed between pipeline components,
+\caption[Intermediate representations between pipeline components.]{Intermediate representations passed between pipeline components,
 with the section defining each producer indicated in parentheses.}
 \label{tab:pipeline_representations}
 \end{table}
@@ -128,7 +128,7 @@ NFR2 & The system is reproducible from documented model weights, datasets, hyper
 NFR3 & Outputs support both human inspection and machine-readable downstream analysis. & Obj.~5 & MP4, PNG visualisations alongside NPY and JSON exports (§\ref{sec:methodology_system}). \\
 \bottomrule
 \end{tabular}
-\caption{Functional (FR) and non-functional (NFR) requirements, with the
+\caption[Functional and non-functional requirements.]{Functional (FR) and non-functional (NFR) requirements, with the
 originating Chapter~\ref{ch:introduction} objective (Obj.) and success
 criterion (SC) where applicable, and the implementation section that delivers
 each requirement.}
@@ -230,7 +230,7 @@ Figure~\ref{fig:generic_detector_output} shows a representative frame annotated 
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=0.92\linewidth]{images/03-methodology/generic_detector_output.png}
-    \caption{Representative output of the generic four-class detector. The model
+    \caption[Representative output of the generic four-class detector.]{Representative output of the generic four-class detector. The model
     localises players, goalkeepers and referees in broadcast footage, providing
     the person detections used by the downstream tracking and team-classification
     stages. Although the detector also predicts a ball class, ball localisation in
@@ -302,7 +302,7 @@ Figure~\ref{fig:ball_temporal_filter} illustrates this candidate-gating process.
         \label{fig:ball_filter_selected}
     \end{subfigure}
 
-    \caption{Temporal coherence filtering for the dedicated ball detector. A
+    \caption[Temporal coherence filtering for the dedicated ball detector.]{Temporal coherence filtering for the dedicated ball detector. A
     permissive detector threshold preserves multiple candidate ball detections,
     after which the previously accepted ball position defines an 80-pixel
     displacement gate. The candidate that remains both spatially plausible and
@@ -333,7 +333,7 @@ Generic (Ball class)   & 0.818 & 0.393 & 0.531 & 0.459 & 0.194 \\
 Dedicated ball         & 0.964 & 0.896 & 0.929 & 0.950 & 0.556 \\
 \bottomrule
 \end{tabular}
-\caption{Ball-class performance on the held-out test set: generic four-class
+\caption[Ball-class performance: generic vs.\ dedicated detector.]{Ball-class performance on the held-out test set: generic four-class
 detector versus dedicated single-class detector. The dedicated detector
 raises ball mAP@50 from 0.459 to 0.950 --- a 49 percentage-point absolute
 improvement that motivates the two-detector architecture. Per-class metrics
@@ -410,7 +410,7 @@ identity continuity before, during and after close player interaction.
         \label{fig:tracking_after}
     \end{subfigure}
 
-    \caption{Tracking continuity through close player interaction. The same
+    \caption[Tracking continuity through close player interaction.]{Tracking continuity through close player interaction. The same
     two track identities are retained before, during and after a short overlap
     between players, illustrating the identity stability required by downstream
     modules such as team-label smoothing, possession tracking and heatmap
@@ -486,7 +486,7 @@ and the resulting UMAP/KMeans separation used to initialise team assignment.
         \caption{UMAP projection of SigLIP embeddings with $k=2$ KMeans labels.}
     \end{subfigure}
 
-    \caption{Warmup-phase diagnostic for team assignment. (a) Representative
+    \caption[Warmup-phase diagnostic for team assignment.]{Warmup-phase diagnostic for team assignment. (a) Representative
     torso crops sampled during the warmup period. (b) The corresponding SigLIP
     embeddings after UMAP projection, coloured by the resulting $k=2$ KMeans
     labels. The clear separation between the two groups supports the use of a
@@ -564,7 +564,7 @@ Figure~\ref{fig:gk_resolver_frame} illustrates this image-space assignment rule.
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=0.88\linewidth]{images/03-methodology/gk_resolver_frame.png}
-    \caption{Image-space goalkeeper resolution on a broadcast frame. Outfield
+    \caption[Image-space goalkeeper resolution.]{Image-space goalkeeper resolution on a broadcast frame. Outfield
     players are first assigned to teams and each team's image-space centroid is
     computed. The goalkeeper is then assigned to the nearest outfield-team
     centroid, avoiding reliance on goalkeeper kit colour for team classification.}
@@ -605,7 +605,7 @@ used to define the image-to-pitch correspondences for homography estimation.
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=0.82\linewidth]{images/03-methodology/pitch_keypoint_template.png}
-    \caption{Pitch-keypoint template used for registration. The 32 landmarks
+    \caption[Pitch-keypoint template used for registration.]{Pitch-keypoint template used for registration. The 32 landmarks
     correspond to stable pitch-line intersections, penalty-area corners,
     halfway-line points, and centre-circle points with known pitch-space
     coordinates. The fixed correspondence between detected image-space
@@ -660,7 +660,7 @@ Figure~\ref{fig:pitch_keypoints_and_birdeye} illustrates this registration step.
         \label{fig:pitch_projection_birdeye}
     \end{subfigure}
 
-    \caption{Pitch registration in action. Detected pitch keypoints are used to
+    \caption[Pitch registration in action.]{Pitch registration in action. Detected pitch keypoints are used to
     estimate a homography via Direct Linear Transform, enabling image-space
     detections to be projected into pitch coordinates for bird's-eye-view
     rendering and downstream tactical analysis.}
@@ -830,7 +830,7 @@ annotated broadcast frame and the corresponding pitch-space representation.
         \label{fig:offside_pitch}
     \end{subfigure}
 
-    \caption{Offside decision visualised in image space and pitch space. The
+    \caption[Offside decision in image space and pitch space.]{Offside decision visualised in image space and pitch space. The
     broadcast frame highlights the player flagged as offside, while the bird's-eye
     view shows the attacking direction, the offside line, and the second-last
     defender, marked by a diamond symbol, used by the positional offside checker.}
@@ -909,7 +909,7 @@ Figure~\ref{fig:heatmap_example} shows how projected track samples are converted
         \label{fig:heatmap_rendered}
     \end{subfigure}
 
-    \caption{Per-track heatmap construction. Projected pitch-space positions
+    \caption[Per-track heatmap construction.]{Per-track heatmap construction. Projected pitch-space positions
     are accumulated in a track-specific occupancy grid and rendered with
     smoothing and $\gamma$ correction for visual readability.}
     \label{fig:heatmap_example}
@@ -951,7 +951,7 @@ Pass and offside detection & Manual inspection of detected pass and offside even
 Output generation & Verified that all four output formats (annotated MP4, bird's-eye MP4, heatmap PNGs, JSON event log and stats) are produced for each run-mode preset. & Ensures end-to-end pipeline completeness across all modes. \\
 \bottomrule
 \end{tabular}
-\caption{Component-level verification performed during development. Each row
+\caption[Component-level verification performed during development.]{Component-level verification performed during development. Each row
 describes a deliberate inspection step performed before the corresponding
 component was relied on in the integrated pipeline. Quantitative evaluation
 is reported separately in Chapter~\ref{ch:evaluation}.}
@@ -1085,7 +1085,7 @@ Positional offside only & Full Law~11 modelling including active involvement & A
 Image-space GK centroid resolution & Pitch-space resolution & Functions before homography is valid; preserves goalkeeper assignment when keypoints are insufficient (§\ref{subsec:methodology_gk_resolver}). & Implicit assumption of side-on broadcast camera angle. \\
 \bottomrule
 \end{tabular}
-\caption{Principal architectural decisions, their considered alternatives, and
+\caption[Principal architectural decisions and trade-offs.]{Principal architectural decisions, their considered alternatives, and
 the trade-offs each decision accepts.}
 \label{tab:key_design_decisions}
 \end{table}
@@ -1107,7 +1107,7 @@ Half-time attacking-direction switch & Direction estimator runs once early; resu
 Single-frame anomalous speed (e.g.\ track-id swap) & 40\,km/h plausibility cap zeroes the displacement contribution for that frame. & Genuine motion above the cap is also rejected, though this regime does not occur in football. \\
 \bottomrule
 \end{tabular}
-\caption{Failure conditions handled by the pipeline, the corresponding
+\caption[Failure conditions and mitigation strategies.]{Failure conditions handled by the pipeline, the corresponding
 mitigation strategy, and the residual limitation that the mitigation does
 not fully address. The half-time direction-switch row resolves the forward
 reference made in Section~\ref{subsec:methodology_offside}.}

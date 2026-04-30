@@ -231,7 +231,7 @@ construction. Figure~\ref{fig:cnn-architecture} illustrates this structure.
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.95\linewidth]{images/02-background/cnn_architecture.png}
-    \caption{A common CNN architecture: stacked convolution, 
+    \caption[A common CNN architecture.]{A common CNN architecture: stacked convolution,
     activation, and pooling stages produce feature maps of 
     decreasing spatial resolution, which are passed to fully 
     connected layers for prediction. Reproduced from O'Shea 
@@ -325,7 +325,7 @@ threshold and the predicted class is correct~\cite{lin2014microsoft}.
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=0.72\linewidth]{images/02-background/iou.png}
-    \caption{Intersection over Union (IoU) between a ground-truth bounding
+    \caption[Intersection over Union (IoU).]{Intersection over Union (IoU) between a ground-truth bounding
         box $B_g$ (blue, dashed) and a predicted bounding box $B_p$ (orange).
         IoU is the ratio of the intersection area (gold) to the
         total union area of both boxes, computed as
@@ -368,7 +368,7 @@ downstream.
         \caption{After NMS}
         \label{fig:nms_after}
     \end{subfigure}
-    \caption{Illustration of Non-Maximum Suppression. Before NMS, multiple overlapping candidate boxes may be produced for the same object. After NMS, lower-confidence overlapping boxes are suppressed and the most confident detection is retained.}
+    \caption[Illustration of Non-Maximum Suppression.]{Illustration of Non-Maximum Suppression. Before NMS, multiple overlapping candidate boxes may be produced for the same object. After NMS, lower-confidence overlapping boxes are suppressed and the most confident detection is retained.}
     \label{fig:nms_example}
 \end{figure}
 
@@ -459,7 +459,7 @@ the final detection set.
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\linewidth]{images/02-background/yolo_architecture_conceptual.png}
-    \caption{Generalised YOLO-style single-stage detection 
+    \caption[Generalised YOLO-style detection pipeline.]{Generalised YOLO-style single-stage detection
     pipeline. The backbone extracts multi-scale feature 
     maps, the neck fuses them, and the detection head 
     predicts boxes, objectness, and class scores. NMS 
@@ -676,7 +676,7 @@ associations to high-confidence evidence.
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=0.9\linewidth]{images/02-background/bytetrack_two_stage_association.png}
-    \caption{ByteTrack two-stage association process. Detector output is
+    \caption[ByteTrack two-stage association process.]{ByteTrack two-stage association process. Detector output is
         partitioned by confidence threshold $\tau_{\mathrm{high}}$ into a
         high-score set $D_t^{\mathrm{high}}$ and a low-score set
         $D_t^{\mathrm{low}}$. Stage~1 matches active tracks against
