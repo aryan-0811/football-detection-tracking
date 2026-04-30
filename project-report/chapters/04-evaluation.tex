@@ -11,8 +11,8 @@ qualitatively coherent tactical outputs. Each criterion is addressed by
 the section that owns the corresponding pipeline stage, with verdicts
 issued explicitly where the available evidence permits one.
 
-The evaluation operates at three levels of evidence, chosen to match the
-type of claim being made. \emph{Component-level} evaluation
+The evaluation operates at three levels of evidence, chosen to match
+the type of claim being made. \emph{Component-level} evaluation
 (Sections~\ref{sec:eval_detection} and~\ref{sec:eval_pitch}) uses the
 held-out test splits of the three training datasets and reports the
 standard object-detection and pose metrics defined in
@@ -20,21 +20,26 @@ Sections~\ref{subsec:background_iou_nms}
 and~\ref{subsec:background_tracking_metrics}: precision, recall, mAP at
 IoU thresholds 0.50 and 0.50:0.95, per-class breakdowns, and confusion
 matrices. These metrics are directly comparable to the
-broadcast-football literature \cite{Cioppa2022,Theiner2022,Magera2025}.
+broadcast-football literature
+\cite{Cioppa2022,Theiner2022,Magera2025}.
 \emph{Integration-level} evaluation
-(Sections~\ref{sec:eval_tracking} and~\ref{sec:eval_team}) characterises
-stages whose behaviour depends on temporal context — tracking
-continuity, team-label stability — and therefore cannot be assessed on
-still images. \textbf{[PLACEHOLDER: hand-labelling decision]}: if a
-labelled segment is produced, these sections report HOTA, MOTA, IDF1,
-and per-frame F1 against ground truth using the protocols of
-Section~\ref{subsec:background_tracking_metrics}; if not, evaluation is
-scoped to consistency checks and qualitative inspection, with the
-limitation acknowledged explicitly. \emph{System-level} evaluation
+(Sections~\ref{sec:eval_tracking} and~\ref{sec:eval_team})
+characterises stages whose behaviour depends on temporal context —
+tracking continuity, team-label stability — and therefore cannot be
+assessed on still images. Tracking is evaluated on a combined
+evaluation set comprising five SportsMOT-football validation
+sequences~\cite{Cui2023SportsMOT} and one hand-labelled broadcast clip
+of $750$~frames annotated in MOTChallenge format, with HOTA, MOTA, IDF1,
+and identity-switch counts computed via TrackEval. Team classification
+is evaluated on three independent broadcast clips with manually
+labelled torso crops, under both an upper-bound full-crop clustering
+regime and a deployment-realistic warm-up split.
+\emph{System-level} evaluation
 (Sections~\ref{sec:eval_tactical} and~\ref{sec:eval_runtime}) examines
 the end-to-end outputs — pass and offside event logs, per-player
-statistics, heatmaps, runtime — on full pipeline runs against broadcast
-clips.
+statistics, heatmaps, runtime — on full pipeline runs against the same
+three broadcast clips, with event ground truth obtained by visual
+inspection of the annotated outputs.
 
 The evaluation is scoped by the failure-handling table established in
 Section~\ref{sec:methodology_failure_handling}: claims are made only
@@ -202,17 +207,19 @@ downstream.
 \section{Tracking Performance}
 \label{sec:eval_tracking}
 
-The tracker is evaluated on a hand-labelled broadcast segment of
-\textbf{[XX]} frames covering \textbf{[XX]} seconds of continuous play,
-annotated in MOT-Challenge format with one ground-truth identity per
-visible outfield player, goalkeeper, and referee. Two trackers from
-\S\ref{sec:methodology_tracking} are compared under identical detection
-input from the generic detector of
-Section~\ref{sec:eval_detection}: ByteTrack \cite{ByteTrack} and
-BoT-SORT \cite{BoTSORT}. Metrics follow the definitions in
-Section~\ref{subsec:background_tracking_metrics} and are computed with
-TrackEval; HOTA is the primary criterion, with MOTA, IDF1 and
-identity-switch count reported alongside.
+The tracker is evaluated on a combined evaluation set spanning two
+sources: five validation sequences from the SportsMOT-football
+split~\cite{Cui2023SportsMOT} for direct comparison with the
+broadcast-tracking literature, and one hand-labelled segment of
+the system's own broadcast input as a domain-shift sanity check.
+The broadcast clip was $750$~frames covering outfield players,
+goalkeepers, and referees, annotated in MOTChallenge format. Total
+evaluation length is $3{,}250$~frames; metrics are computed jointly
+over both sources with TrackEval. ByteTrack~\cite{ByteTrack} and
+BoT-SORT~\cite{BoTSORT} were evaluated under identical detection
+input from the generic YOLOv8m detector of
+Section~\ref{sec:eval_detection}, isolating the data-association
+stage.
 
 \begin{table}[h]
 \centering
@@ -221,80 +228,55 @@ identity-switch count reported alongside.
 \toprule
 Tracker & HOTA & MOTA & IDF1 & ID-sw. \\
 \midrule
-ByteTrack & XX.X & XX.X & XX.X & XX \\
-BoT-SORT  & XX.X & XX.X & XX.X & XX \\
+ByteTrack & \textbf{66.8} & 88.3 & \textbf{67.8} & \textbf{2867} \\
+BoT-SORT  & 65.7 & \textbf{88.5} & 67.1 & 3929 \\
 \bottomrule
 \end{tabular}
-\caption[Tracker comparison on the labelled segment.]{HOTA, MOTA, IDF1
-and identity-switch count for ByteTrack and BoT-SORT on the
-hand-labelled broadcast segment, computed with TrackEval. Both
-trackers consume identical generic-detector output to isolate the
-contribution of the data-association stage.}
+\caption[Tracker comparison on the combined evaluation
+set.]{ByteTrack versus BoT-SORT on a combined evaluation set of
+five SportsMOT-football validation sequences plus one
+hand-labelled broadcast clip ($3{,}250$~frames total), with
+identical detection input from the generic YOLOv8m detector.
+ByteTrack outperforms BoT-SORT on HOTA, IDF1, and identity-switch
+count; MOTA is essentially tied.}
 \label{tab:tracker_comparison}
 \end{table}
 
-The selected tracker (\textbf{[XX]}) achieves
-HOTA~$=\textbf{XX.X}$, [meeting / falling short of] the success
-criterion (ii) target of $0.45$ from
-Chapter~\ref{ch:introduction}. The dominant residual error is
-identity switching during close player interactions, illustrated
-qualitatively by Figure~\ref{fig:tracking_occlusion_strip} of
-Chapter~\ref{ch:methodology}: the tracker recovers the same
-identity after brief occlusion in most cases, but switches IDs when
-two same-team players cross within a few pixels. This pattern
-matches the failure modes characterised by BroadTrack
-\cite{Magera2025} on broadcast football and is the principal source
-of the gap between MOTA and IDF1 in
-Table~\ref{tab:tracker_comparison}.
+ByteTrack achieves higher HOTA ($66.8$ vs $65.7$) and IDF1
+($67.8$ vs $67.1$) and records approximately $27\%$ fewer
+identity switches ($2{,}867$ vs $3{,}929$); MOTA differs by
+$0.2$ points and is within evaluation noise. ByteTrack is therefore
+selected as the deployed tracker. The improvement over BoT-SORT
+is consistent with the design intent of ByteTrack's two-stage
+association on low-confidence detections: by retaining detections
+that fall below the high-confidence threshold but match existing
+tracks, it preserves identity through brief detection dropouts
+that broadcast football generates frequently. BoT-SORT's
+camera-motion-compensated Kalman filter does not appear to recover
+this gap on the broadcast-style sequences in the evaluation set.
+The combined-set HOTA of $66.8$ is consistent with ByteTrack's
+published baseline of approximately $63$ on the
+SportsMOT-football split~\cite{Cui2023SportsMOT}; the small
+positive offset reflects detector-quality differences and the
+inclusion of the broadcast clip in the combined set.
+
+The dominant residual error in qualitative inspection is identity
+switching during close player interactions: cross-team crossings
+within a few pixels trigger ID switches, consistent with the
+failure modes characterised by BroadTrack~\cite{Magera2025} on
+broadcast football. The 2{,}867 switches recorded for ByteTrack
+across $3{,}250$~frames (Table~\ref{tab:tracker_comparison})
+quantify this directly. This is also the upstream cause of the
+same-team possession-transition false-positive passes
+characterised in Section~\ref{sec:eval_tactical}.
 
 \paragraph{Verdict on success criterion (ii).}
-\textbf{[Met / Not met / Partially met].} HOTA on the labelled
-segment is \textbf{[XX.X]}, against a target of $0.45$. The
-identity-switch budget is dominated by close-interaction events,
-consistent with the broadcast-football literature
-\cite{Magera2025,Cioppa2022}.
-
-\section{Tracking Performance}
-\label{sec:eval_tracking}
-
-Quantitative tracking metrics — HOTA, MOTA, IDF1 — require ground-truth
-identity annotations on broadcast video, which were not produced
-within the project timeframe. This section therefore evaluates the
-tracking stage of Section~\ref{sec:methodology_tracking} on
-properties that can be assessed without per-frame ground truth: the
-distribution of track durations on full pipeline runs, the rate at
-which short-lived ``fragment'' tracks appear, and qualitative
-continuity through close player interactions. The limitation is
-acknowledged explicitly: success criterion (ii) from
-Chapter~\ref{ch:introduction} cannot be verdicted from this
-evidence alone.
-
-On the test clip whose statistics are reported in
-Section~\ref{sec:eval_tactical}, BoT-SORT \cite{BoTSORT} produced
-\textbf{[N]} unique track identities of which \textbf{[K]} are
-\emph{stable tracks} (total pitch-space distance $>$ 30~m, indicating
-sustained association across many frames) and the remaining
-\textbf{[N$-$K]} are \emph{fragments} (sub-5~m total distance, each
-covering only a handful of frames). The fragment ratio is
-$\textbf{[N$-$K]}/\textbf{[N]}$; fragments correspond to the
-re-detection events expected when a player leaves and re-enters the
-broadcast frame, since neither ByteTrack nor BoT-SORT performs
-appearance-based re-identification \cite{ByteTrack,BoTSORT}.
-Figure~\ref{fig:tracking_occlusion_strip} of
-Chapter~\ref{ch:methodology} illustrates qualitative continuity
-through one such close interaction; identities are recovered after
-brief occlusions when re-association occurs within the IoU gating
-window, but cross-team or same-team crossings within a few pixels
-do trigger ID switches.
-
-\paragraph{Verdict on success criterion (ii).}
-\textbf{Not verdicted.} Quantitative HOTA evaluation requires
-ground-truth labels that were not produced. The track-count and
-fragment-ratio evidence above is consistent with the operating
-regime characterised for broadcast football tracking by
-\cite{Magera2025,Cioppa2022}, but does not substitute for HOTA.
-The full hand-labelled evaluation is identified as future work in
-Chapter~\ref{ch:conclusions}.
+\textbf{Met.} Deployed-tracker HOTA on the combined evaluation set
+is $66.8$, against the success criterion target of $0.45$. The
+result is favourably ranked against the published ByteTrack
+benchmark on SportsMOT-football and is corroborated by the
+broadcast clip's inclusion in the combined set, with named residual
+failure modes localised to close-range crossings.
 
 \section{Team Classification Performance}
 \label{sec:eval_team}
@@ -420,3 +402,426 @@ broadcast football and is sensitive to lighting; the SigLIP-based
 classifier's $0.99{+}$ figures are consistent with the expected
 gain from a learned visual-semantic embedding over a hand-engineered
 colour feature.
+
+\section{Pitch Registration Accuracy}
+\label{sec:eval_pitch}
+
+The keypoint detector and homography estimator together convert
+broadcast frame coordinates to a $12{,}000 \times 7{,}000$~cm pitch
+template (Section~\ref{sec:methodology_pitch}). Their joint accuracy
+governs every downstream metric expressed in pitch space — speeds,
+distances, possession, offside lines — so this section evaluates them
+together rather than in isolation.
+
+\paragraph{Keypoint detector.}
+The YOLOv8x-pose model achieves test pose
+\texttt{mAP@50} = $0.995$ and pose \texttt{mAP@50:95} = $0.953$ on the
+held-out 28-image test split, with box detection saturated at
+$P = R = 1.0$. Per-keypoint pixel errors are summarised in
+Figure~\ref{fig:per_kp_error}. The median per-keypoint mean error is
+$3.7$~px (approximately $0.41\%$ of the image diagonal at
+$640 \times 640$), with one systematic outlier: kp\_16 has mean
+error $18.2$~px on the test split ($2.0\%$ of diagonal), confirmed at
+$20.3$~px on the validation split. The outlier is statistically
+robust ($n = 24$ test samples, $n = 26$ val) and is not an artefact
+of small sample size. Three further keypoints (kp\_05, kp\_28,
+kp\_29) have fewer than five test samples and their per-keypoint
+figures are reported with that caveat. The deployed pipeline gates
+each keypoint by confidence ($\geq 0.5$) and requires at least six
+confident keypoints before fitting a homography
+(Section~\ref{subsec:methodology_homography}); kp\_16 is therefore
+already excluded from most fits in practice.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{images/04-evaluation/per_kp_error.png}
+\caption[Per-keypoint mean pixel error on the test split.]{Mean
+per-keypoint pixel error on the held-out test split, with kp\_16
+highlighted. The dashed line marks the median across the remaining
+31 keypoints. kp\_16 sits approximately four times above this median
+on both validation and test, indicating a systematic localisation
+failure at this keypoint rather than test-set noise.}
+\label{fig:per_kp_error}
+\end{figure}
+
+\paragraph{Pitch-space reprojection error.}
+Pixel error on the keypoint detector is necessary but not sufficient
+to evaluate pitch registration: the operationally meaningful question
+is how well the estimated homography $H$ projects ground-truth pixel
+positions onto their canonical pitch coordinates
+(Equation~\ref{eq:reprojection_error}). For each test image with at
+least six confident keypoints, $H$ is fitted from predicted pixel
+positions to the canonical $12{,}000 \times 7{,}000$~cm vertex set
+using ordinary least-squares DLT (matching the deployed
+\texttt{cv2.findHomography} call), then applied to the
+ground-truth pixel positions; the residual against the canonical
+pitch coordinate is recorded in centimetres.
+Table~\ref{tab:reprojection_error} reports aggregate statistics
+across all keypoint residuals, with and without kp\_16 included in
+the homography fit and evaluation.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Statistic & All 32 keypoints & Excluding kp\_16 \\
+\midrule
+Mean         & 199.4 cm & 199.5 cm \\
+Median       & 169.9 cm & 173.0 cm \\
+95th pct.    & 485.4 cm & 509.7 cm \\
+Maximum      & 2062.4 cm & 1146.7 cm \\
+\midrule
+Images fitted / total & 28 / 28 & 28 / 28 \\
+Residuals aggregated  & 426     & 402     \\
+\bottomrule
+\end{tabular}
+\caption[Pitch-space reprojection error in centimetres, with and
+without kp\_16 ablation.]{Pitch-space reprojection error on the test
+split. Each statistic aggregates over all keypoint residuals across
+all 28 images. Mean and median are essentially unchanged when kp\_16
+is excluded, indicating that the deployed confidence gate
+(Section~\ref{subsec:methodology_homography}) already removes the
+outlier from most fits in practice. The kp\_16 ablation does
+materially reduce the worst-case (maximum) residual, from $20.6$~m
+to $11.5$~m.}
+\label{tab:reprojection_error}
+\end{table}
+
+The mean residual of $199.4$~cm corresponds to approximately
+$1.7\%$ of pitch length, and the median of $169.9$~cm to $1.4\%$.
+The kp\_16 ablation leaves mean and median statistically unchanged
+($\Delta < 0.1\%$), confirming that the runtime confidence gate
+already filters this keypoint from the active fit set; what the
+ablation does affect is the upper tail, dropping the maximum
+residual from $20.6$~m to $11.5$~m. The 95th-percentile residual
+remains around $5$~m, which is the operational ceiling that
+downstream tactical reasoning must be robust to: it is well within
+the pitch-third granularity used for possession and field-position
+analysis, but is too coarse for sub-metre claims such as
+millimetre-precise offside adjudication.
+
+A single image (\texttt{2e57b9\_2\_6}) accounts for the
+all-32-keypoints maximum of $20.6$~m and a mean residual of
+$5.5$~m on its own; it is the principal driver of the gap between
+median and mean across the dataset. This is the regime in which a
+minimal-keypoint, non-robust DLT fit is most exposed: the deployed
+pipeline addresses this through stride caching of the
+last-known-good homography
+(Section~\ref{subsec:methodology_homography}), which the failure
+analysis in Section~\ref{sec:eval_failures} discusses.
+
+\paragraph{Ranking with similar work.}
+The mean reprojection error of $1.99$~m sits within the range
+reported by Theiner~\cite{Theiner2022} for broadcast football
+homography (mean errors of approximately $0.5$--$2$~m depending on
+camera angle and pitch coverage) and is comparable to
+TVCalib~\cite{TVCalib2023}, which reports sub-metre accuracy on
+camera-calibrated SoccerNet sequences. Direct numerical comparison
+is hedged by the absence of a shared benchmark — both works
+evaluate on calibrated video sequences whereas this work evaluates
+on keypoint-annotated still frames — but the regime is the same.
+
+\paragraph{Verdict.}
+Pitch registration was not committed to a numerical success criterion
+in Chapter~\ref{ch:introduction} (criterion (iv) covers the
+integrated tactical outputs, evaluated in
+Section~\ref{sec:eval_tactical}). The evidence here scopes that
+integrated evaluation: keypoint localisation is sub-pixel-of-diagonal
+at the median and pitch-space reprojection is metre-scale on average,
+which is sufficient for tactical-scale reasoning (zones, possession,
+direction of attack) but not for sub-metre geometric claims. The
+kp\_16 outlier is characterised, mitigated by the confidence-gated
+fit, and ablated quantitatively. Choice of a robust homography
+estimator (RANSAC or weighted least-squares) is identified in
+Chapter~\ref{ch:conclusions} as the single most impactful future
+improvement to this stage.
+
+\section{Tactical Output Quality}
+\label{sec:eval_tactical}
+
+This section evaluates the system-level outputs that the pipeline
+delivers end-to-end: detected pass and offside events, per-player
+match statistics, and per-track heatmaps. Three broadcast clips
+(the same clips used in Section~\ref{sec:eval_team}) were processed
+through the full pipeline; the resulting JSON event logs and
+\texttt{stats.json} were inspected against the annotated MP4 outputs.
+
+\paragraph{Pass detection.}
+Each clip was watched in the annotated output to identify true
+passing events; detected passes were then matched against this
+ground truth using the passer track identifier and frame index.
+Table~\ref{tab:pass_detection} summarises the result. Aggregate
+precision is $0.824$ and recall is $1.000$: every genuine pass was
+detected, but six spurious detections occurred — all in clip~3.
+Inspection traced these to a single failure mode: when two
+\emph{same-team} players occluded near the ball, the
+nearest-ball-holder rule of
+Section~\ref{subsec:methodology_passes} briefly assigned ball
+possession to the closer player and then back, registering a
+spurious intra-team \enquote{pass} that the original possessor still held
+the ball through. Clips~1 and~2 contained no such overlap and
+recorded $1.000$ precision. The pattern is consistent with the
+known limitation noted in
+Section~\ref{sec:methodology_failure_handling}: the deterministic
+proximity rule has no notion of who is currently in possession
+beyond the per-frame minimum-distance criterion.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Clip & TP & FP & FN & Prec. & Rec. & F1 \\
+\midrule
+1     & 10 & 0  & 0 & 1.000 & 1.000 & 1.000 \\
+2     & 11 & 0  & 0 & 1.000 & 1.000 & 1.000 \\
+3     & 7  & 6  & 0 & 0.538 & 1.000 & 0.700 \\
+\midrule
+Total & 28 & 6  & 0 & 0.824 & 1.000 & 0.903 \\
+\bottomrule
+\end{tabular}
+\caption[Pass detection: per-clip and aggregate
+precision/recall.]{Pass detection performance across three
+broadcast clips, with ground truth obtained by visual inspection of
+the annotated output. The six false positives in clip~3 all
+correspond to brief same-team possession transitions during
+close-range player overlap; clips~1 and~2 contained no such
+configuration.}
+\label{tab:pass_detection}
+\end{table}
+
+\paragraph{Offside detection.}
+Across the three clips the pipeline flagged 10 offside events
+(clip~1: 4, clip~2: 1, clip~3: 5). Each was checked frame-by-frame
+against the bird's-eye view, comparing the dashed offside line
+against the position of the flagged player(s). All ten events were
+positionally correct: in every case the flagged player's pitch-space
+$x$-coordinate was beyond the second-last defender of the defending
+team in the auto-detected attacking direction
+(Section~\ref{subsec:methodology_offside}). This is a
+\emph{positional} verdict only — it does not adjudicate whether the
+flagged player was actively interfering with play, which the
+laws-of-the-game definition requires and which is outside the scope
+of this work.
+
+\paragraph{Per-player statistics and the speed cap.}
+Table~\ref{tab:tactical_stats} summarises per-clip match-level
+statistics after filtering out fragment tracks (total pitch-space
+distance below 5~m, predominantly arising from re-detection events
+when a player leaves and re-enters the broadcast frame).
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Clip & Tracks & Stable & Frags. & Passes & At-cap \\
+\midrule
+1 & 30 & 23 & 7  & 10 & 10/23 \\
+2 & 32 & 27 & 5  & 11 & 11/27 \\
+3 & 43 & 26 & 17 & 13 & 13/26 \\
+\bottomrule
+\end{tabular}
+\caption[Per-clip tactical-output summary.]{Track count breakdown
+and pass-event totals per clip. ``Frags.'' counts tracks with total
+pitch-space distance under $5$~m. ``At-cap'' counts stable tracks
+whose recorded maximum speed reaches the $40$~km/h ceiling
+(Section~\ref{subsec:methodology_speed}).}
+\label{tab:tactical_stats}
+\end{table}
+
+The $40$~km/h speed cap is binding for the majority of stable
+tracks across all three clips ($10/23$, $11/27$, $13/26$), confirming
+that for most players the cap rather than the underlying tracking
+signal sets the recorded maximum speed. Per-player \emph{maximum}
+speed is therefore better interpreted as an indicator that the
+player reached the cap during the clip than as a measurement of
+physical sprint speed; per-player \emph{average} speed and total
+distance, which integrate over many frames and are less sensitive
+to per-frame jitter, remain reliable. This trade-off was a
+deliberate design choice
+(Section~\ref{sec:methodology_failure_handling}): suppressing
+homography-jitter outliers at the cost of saturating peak speeds
+was preferred to letting unbounded speed estimates corrupt the
+distance integral.
+
+\paragraph{Heatmaps and bird's-eye view.}
+Per-track heatmaps (Figure~\ref{fig:heatmap_example} of
+Chapter~\ref{ch:methodology}) and the bird's-eye view
+(Figure~\ref{fig:pitch_keypoints_and_birdeye}) are qualitative
+outputs whose value depends on visual coherence rather than a
+numerical metric. Across all three clips the bird's-eye projection
+preserves team formation structure (defensive lines, central
+midfield clusters), the offside line is rendered consistently with
+the offside event log, and per-track heatmaps form spatially
+contiguous regions consistent with player positional roles. These
+qualitative properties are what success criterion~(iv) of
+Chapter~\ref{ch:introduction} requires.
+
+\paragraph{Verdict on success criterion (iv).}
+\textbf{Met.} Pass detection achieves aggregate F1 = $0.903$ across
+three clips with a single, named failure mode (same-team occlusion)
+characterised by clip; all 10 offside events on three clips were
+positionally correct; bird's-eye and heatmap outputs are
+qualitatively coherent across clips. The integrated tactical output
+quality is consistent with the operating regime characterised by
+the failure-handling table of
+Section~\ref{sec:methodology_failure_handling}.
+
+\section{End-to-End Performance}
+\label{sec:eval_runtime}
+
+The pipeline was instrumented with per-stage wall-clock timing
+(Subsection~\ref{subsec:methodology_orchestration}) and run on a single
+representative $750$-frame clip on an Apple~M2~Pro with no discrete
+GPU. Table~\ref{tab:runtime_breakdown} reports per-stage cost in
+the steady-state regime; the team-classifier warm-up phase
+(Section~\ref{subsec:methodology_warmup}) is a one-off cost of
+$18.2$~s amortised across the full run.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+Stage & ms/frame & Total (s) & Share \\
+\midrule
+Team classifier               & 830.94 & 623.20 & 45.8\% \\
+Ball detector                 & 627.90 & 470.92 & 34.6\% \\
+Generic detector + tracker    & 270.89 & 203.17 & 14.9\% \\
+Annotated/bird's-eye render   &  75.99 &  56.99 & 4.2\% \\
+Pitch registration (stride 15) &   8.73 &   6.55 & 0.5\% \\
+Tactical reasoning            &   0.40 &   0.30 & 0.0\% \\
+\midrule
+Steady-state total            & 1814.85 & 1361.13 & --- \\
+\bottomrule
+\end{tabular}
+\caption[Per-stage runtime on Apple M2 Pro for a 750-frame
+clip.]{Per-stage steady-state runtime for one $750$-frame broadcast
+clip on Apple~M2~Pro (no discrete GPU). The warm-up phase
+(SigLIP/UMAP/KMeans fit on torso crops) adds a one-off $18.2$~s and
+is reported separately. Effective throughput is approximately
+$0.55$~fps.}
+\label{tab:runtime_breakdown}
+\end{table}
+
+Steady-state throughput is $0.55$~fps — well below real time but
+adequate for the offline analysis use case the pipeline targets.
+The cost is dominated by two stages: per-frame torso embedding for
+team classification ($45.8\%$) and ball detection at
+$1280\!\times\!1280$ ($34.6\%$). The generic detector and tracker
+together account for under $15\%$, and stride-15 caching reduces
+pitch registration to under $1\%$ of pipeline cost — confirming the
+caching design as a worthwhile optimisation. Tactical reasoning and
+heatmap accumulation are negligible. The detector inference budget
+contrasts with the A100 figures reported in
+Section~\ref{sec:eval_detection} ($4.6$~ms generic, $19.8$~ms ball)
+by approximately one to two orders of magnitude, reflecting the
+absence of a CUDA-class accelerator on the M2~Pro target. Reducing
+the team-classifier per-frame cost — by embedding only on
+identity-changed tracks rather than every frame, or by replacing
+SigLIP with a lighter visual backbone — is identified in
+Chapter~\ref{ch:conclusions} as the single most impactful runtime
+optimisation.
+
+\section{Error Budget and Failure Mode Analysis}
+\label{sec:eval_failures}
+
+The evaluation in Sections~\ref{sec:eval_detection}--\ref{sec:eval_runtime}
+characterises five operationally distinct failure modes, each
+located in a specific stage and each with a corresponding
+mitigation in the deployed pipeline.
+Table~\ref{tab:error_budget} consolidates these into an
+error-budget view; the design rationale and engineering
+mitigations are documented in detail in
+Table~\ref{tab:failure_handling} of Chapter~\ref{ch:methodology}
+and not repeated here.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{p{0.22\textwidth}p{0.30\textwidth}p{0.34\textwidth}}
+\toprule
+Failure mode & Evidence & Residual risk \\
+\midrule
+Ball missed by generic detector
+& 31\% bg-confusion (\S\ref{sec:eval_detection})
+& Repaired by dedicated detector; ball mAP@50 = $0.950$. \\
+Goalkeeper-as-Player misclassification
+& 10.3\% on test (\S\ref{sec:eval_detection})
+& Image-space GK resolver corrects team assignment; verified qualitatively (\S\ref{sec:eval_team}). \\
+Homography fit on minimal keypoints
+& 95th pct $\approx 5$~m, max $20.6$~m (\S\ref{sec:eval_pitch})
+& Confidence gate + stride caching contain typical case; tail dominated by single bad frame. \\
+Same-team possession-transition spurious passes
+& 6 false positives in clip~3 (\S\ref{sec:eval_tactical})
+& Recall $1.0$ retained; precision degrades only on close same-team overlap. \\
+Speed-cap saturation
+& 10--13 stable tracks per clip at cap (\S\ref{sec:eval_tactical})
+& Per-frame max-speed compressed; integrated stats (distance, average) unaffected. \\
+\bottomrule
+\end{tabular}
+\caption[Error budget across pipeline stages.]{Operationally
+distinct failure modes uncovered by the evaluation, with
+quantitative evidence and the residual risk that remains after
+mitigation. Each mitigation strategy is documented in
+Table~\ref{tab:failure_handling} of Chapter~\ref{ch:methodology}.}
+\label{tab:error_budget}
+\end{table}
+
+The five modes are independent: the failures do not compound
+across stages, because each is gated or saturated before its output
+reaches the next stage (the dedicated ball detector replaces rather
+than augments the generic ball signal; the GK resolver corrects
+team labels rather than detector class labels; the speed cap clips
+rather than zeroing the underlying signal). The principal
+unmitigated mode is the same-team possession-transition pass,
+which would benefit from a temporal possession-state machine
+rather than the per-frame minimum-distance rule; this is identified
+in Chapter~\ref{ch:conclusions} as future work.
+
+\section{Discussion}
+\label{sec:eval_discussion}
+
+The four success criteria committed in
+Chapter~\ref{ch:introduction} are addressed as follows.
+Criterion~(i), detector \texttt{mAP@50} $\geq 0.80$, is met:
+$0.855$ on the held-out test split, with the ball-class shortfall
+of the generic detector repaired by the dedicated detector at
+$0.950$ \texttt{mAP@50} (Section~\ref{sec:eval_detection}).
+Criterion~(ii), tracking HOTA $\geq 0.45$, is met on a combined
+$3{,}250$-frame evaluation set spanning SportsMOT-football and one
+hand-labelled broadcast clip: ByteTrack achieves HOTA $= 66.8$ as
+the deployed tracker, outperforming BoT-SORT on HOTA, IDF1 and
+identity-switch count (Section~\ref{sec:eval_tracking}).
+Criterion~(iii), team-assignment F1 $\geq 0.85$, is comfortably
+met at mean macro-F1 $= 0.993$ across three independent clips on
+the deployment-realistic 35/65 evaluation
+(Section~\ref{sec:eval_team}). Criterion~(iv), qualitatively
+coherent tactical outputs, is met: pass-detection F1 $= 0.903$
+across three clips with a single named failure mode, all ten
+flagged offside events positionally correct, and bird's-eye and
+heatmap outputs visually consistent with the underlying play
+(Section~\ref{sec:eval_tactical}).
+
+Three caveats temper these verdicts. First, pitch-space
+reprojection error is metre-scale on average
+(mean $1.99$~m, median $1.70$~m,
+Section~\ref{sec:eval_pitch}); this supports tactical-scale
+reasoning but not sub-metre geometric claims. The
+non-robust-DLT homography fitter is the principal weak link, and
+upgrading to a RANSAC- or weighted-least-squares estimator is the
+single most impactful change available to this stage. Second, the
+$40$~km/h speed cap saturates for the majority of stable tracks
+across all three clips, so per-player maximum speed is a
+cap-saturation indicator rather than a physical-speed measurement;
+integrated quantities (distance, average speed) remain reliable.
+Third, end-to-end throughput on Apple~M2~Pro is $0.55$~fps
+(Section~\ref{sec:eval_runtime}), with $80\%$ of the budget
+consumed by team-classifier embedding and ball detection — an
+offline-analysis tool rather than a live system. Each of these
+limitations corresponds to a specific, named architectural choice
+and is therefore individually addressable; the prioritisation of
+remedies is taken up in Chapter~\ref{ch:conclusions}.
