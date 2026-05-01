@@ -157,8 +157,8 @@ project. Cross-entropy is used for classification targets,
     -\sum_{c=1}^{C} y_c \log \hat{y}_c,
 \]
 where \(\hat{y}\) is a predicted distribution over \(C\) 
-classes and \(y\) is a one-hot ground truth. Squared error 
-is used for continuous targets such as bounding-box 
+classes and \(y\) is a one-hot ground truth. Mean Squared Error (MSE)
+is used for continuous targets such as bounding-box
 coordinates,
 \[
     \mathcal{L}_{\text{MSE}}(\hat{y}, y) =
@@ -267,7 +267,7 @@ Training deep visual models from scratch typically requires
 very large datasets and substantial computation. Transfer 
 learning sidesteps this by initialising the target-task 
 model with parameters \(\theta_0\) learned from a large 
-general-purpose dataset such as ImageNet or COCO. 
+general-purpose dataset such as ImageNet or Common Objects in Context (COCO).
 Empirically, the lower layers of such pre-trained networks 
 encode general visual features — edges, colour transitions, 
 textures — that transfer well across domains, while upper 
@@ -417,10 +417,10 @@ projection.
 \label{subsec:background_yolo}
 
 Object detectors fall broadly into two families. Two-stage 
-detectors such as Faster R-CNN~\cite{ren2015faster} first 
+detectors such as Faster Region-based CNN (R-CNN)~\cite{ren2015faster} first
 propose candidate regions and then classify and refine 
 them, giving strong localisation at the cost of speed. 
-Single-stage detectors such as SSD~\cite{liu2016ssd} and 
+Single-stage detectors such as the Single Shot MultiBox Detector (SSD)~\cite{liu2016ssd} and
 YOLO~\cite{Redmon2016} predict boxes and class scores in a 
 single forward pass, making them better suited to 
 video-rate applications such as broadcast football 
@@ -509,8 +509,8 @@ output of the head:
     \lambda_{\mathrm{cls}}\,\mathcal{L}_{\mathrm{cls}}.
 \]
 The first term \(\mathcal{L}_{\mathrm{box}}\) penalises 
-localisation error, typically using an IoU-based loss such 
-as CIoU. The second \(\mathcal{L}_{\mathrm{obj}}\) is a 
+localisation error, typically using an IoU-based loss such
+as Complete IoU (CIoU).The second \(\mathcal{L}_{\mathrm{obj}}\) is a 
 binary loss over whether each predicted location actually 
 contains an object. The third \(\mathcal{L}_{\mathrm{cls}}\) 
 is a classification loss over the object class. Splitting 
@@ -641,7 +641,7 @@ problem to optimality in \(O(n^3)\)
 time~\cite{Kuhn1955}. Unmatched detections seed new tracks; 
 unmatched tracks are buffered and eventually deleted if not 
 recovered. This Kalman--Hungarian skeleton underlies 
-SORT~\cite{Bewley2016SORT}, ByteTrack~\cite{ByteTrack}, and 
+Simple Online and Realtime Tracking (SORT)~\cite{Bewley2016SORT}, ByteTrack~\cite{ByteTrack}, and
 BoT-SORT~\cite{BoTSORT}.
 
 \subsection{ByteTrack}
@@ -726,9 +726,9 @@ association scores~\cite{HOTA2020}:
     \sqrt{\mathrm{DetA}_\alpha \cdot \mathrm{AssA}_\alpha},
     \label{eq:hota}
 \end{equation}
-where \(\mathrm{DetA}_\alpha\) measures box overlap with 
-ground truth at localisation threshold \(\alpha\), and 
-\(\mathrm{AssA}_\alpha\) measures identity consistency — 
+where the Detection Accuracy \(\mathrm{DetA}_\alpha\) measures box overlap with
+ground truth at localisation threshold \(\alpha\), and the
+Association Accuracy \(\mathrm{AssA}_\alpha\) measures identity consistency —
 the average proportion of ground-truth and predicted 
 trajectories that share an identity over their joint 
 lifetime. The geometric mean ensures that neither component 
@@ -774,7 +774,7 @@ required by competition rules to be visually distinguishable.
 \label{subsec:team_id_representations}
 
 The classical approach extracts colour histograms in spaces 
-such as RGB, HSV, or Lab and clusters players by histogram 
+such as Red--Green--Blue (RGB), Hue--Saturation--Value (HSV), or CIE L*a*b* (Lab) and clusters players by histogram
 similarity~\cite{istasse2019colour}. Such features are 
 fast, interpretable, and align with the cue humans use, but 
 they are sensitive to lighting changes, shadows, and 
@@ -782,8 +782,8 @@ background pixels included in the crop, and they discard
 spatial structure entirely.
 
 A more robust alternative is to use deep visual embeddings. 
-Modern pretrained encoders such as CLIP, SigLIP, and 
-DINOv2 learn transferable visual representations from 
+Modern pretrained encoders such as Contrastive Language--Image Pre-training (CLIP), Sigmoid Loss for Language--Image Pre-training (SigLIP), and
+self-DIstillation with NO labels v2 (DINOv2) learn transferable visual representations from
 internet-scale pre-training~\cite{radford2021clip,SigLIP2023,oquab2024dinov2} 
 and produce embeddings that capture colour, texture, shape, 
 and pattern jointly in a single vector. Because their 
@@ -993,7 +993,7 @@ conditioning~\cite{hartley2003multiple} before solving.
 Real correspondences contain both noise and outliers — 
 incorrectly localised keypoints whose error is large 
 enough to corrupt the least-squares estimate. Robust 
-estimation is therefore performed using RANSAC, which 
+estimation is therefore performed using Random Sample Consensus (RANSAC), which
 repeatedly samples minimal sets of four correspondences, 
 fits a candidate homography from each, and counts how 
 many of the remaining correspondences are consistent with 

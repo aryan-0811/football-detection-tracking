@@ -35,7 +35,7 @@ To achieve this aim, the project pursues the following objectives:
 
 The project does not aim to replace professional commercial tracking systems, but rather to assess how much tactical information a reproducible, open pipeline can extract from standard broadcast footage.
 
-The project will be considered successful if: (i)~the main object detector achieves $\mathrm{mAP}_{50} \geq 0.80$ across entity classes; (ii)~multi-object tracking reaches $\mathrm{HOTA} \geq 0.45$ on a labelled test segment; (iii)~unsupervised team assignment achieves $F_1 \geq 0.85$; and (iv)~the integrated pipeline produces coherent tactical outputs---including bird's-eye projections, heatmaps, and offside analysis---that are qualitatively consistent with the underlying match footage. These thresholds reflect realistic performance expectations for broadcast football analysis informed by the literature \cite{Theiner2022,Cioppa2022}.
+The project will be considered successful if: (i)~the main object detector achieves a mean Average Precision ($\mathrm{mAP}_{50}$) $\geq 0.80$ across entity classes; (ii)~multi-object tracking reaches a Higher Order Tracking Accuracy ($\mathrm{HOTA}$) $\geq 0.45$ on a labelled test segment; (iii)~unsupervised team assignment achieves an $F_1$ score $\geq 0.85$; and (iv)~the integrated pipeline produces coherent tactical outputs---including bird's-eye projections, heatmaps, and offside analysis---that are qualitatively consistent with the underlying match footage. These thresholds reflect realistic performance expectations for broadcast football analysis informed by the literature \cite{Theiner2022,Cioppa2022}.
 
 \section{Evaluation Strategy}
 \label{sec:eval-strategy}
@@ -87,7 +87,7 @@ Pitch keypoints and homography
 & Measure field registration quality and projection accuracy in pitch-space. \\
 
 Multi-object tracking 
-& HOTA, IDF1, MOTA, identity switches 
+& HOTA, Identification F1 (IDF1), MOTA, identity switches
 & Evaluate temporal consistency and identity preservation \cite{HOTA2020,MOTChallenge2021}. \\
 
 Team assignment 
@@ -95,7 +95,7 @@ Team assignment
 & Measure accuracy of unsupervised team separation. \\
 
 Tactical outputs 
-& Precision, recall, and $F_1$ for event detection; MAE for possession; qualitative assessment for heatmaps and bird's-eye views 
+& Precision, recall, and $F_1$ for event detection; Mean Absolute Error (MAE) for possession; qualitative assessment for heatmaps and bird's-eye views
 & Assess whether projected trajectories support useful downstream analysis. \\
 
 End-to-end pipeline 

@@ -14,9 +14,9 @@ deferred to Chapter~\ref{ch:evaluation}.
 \label{sec:methodology_overview}
 
 The pipeline ingests a broadcast football video and emits four output classes:
-an annotated MP4 with bounding boxes, team labels, track identifiers, and
+an annotated MPEG-4 Part 14 (MP4) video with bounding boxes, team labels, track identifiers, and
 offside indicators; a bird's-eye-view MP4 in pitch-space coordinates; per-track
-heatmap PNGs; and JSON logs of pass and offside events together with per-player
+heatmap Portable Network Graphics (PNG) images; and JavaScript Object Notation (JSON) logs of pass and offside events together with per-player
 match statistics. Internally, processing decomposes into three parallel branches
 that converge at a shared pitch-space representation, illustrated in
 Figure~\ref{fig:pipeline_overview}.
@@ -125,7 +125,7 @@ FR6 & Operate end-to-end as an integrated pipeline on a complete broadcast clip 
 \multicolumn{4}{l}{\textit{Non-functional}} \\
 NFR1 & Components are independently replaceable without modifying unrelated modules. & Obj.~6 & Package layout under \texttt{src/}; configuration-file tracker selection (§\ref{sec:methodology_system}). \\
 NFR2 & The system is reproducible from documented model weights, datasets, hyperparameters, and configuration files. & Obj.~6 & Reproducibility documentation (§\ref{subsec:methodology_reproducibility}). \\
-NFR3 & Outputs support both human inspection and machine-readable downstream analysis. & Obj.~5 & MP4, PNG visualisations alongside NPY and JSON exports (§\ref{sec:methodology_system}). \\
+NFR3 & Outputs support both human inspection and machine-readable downstream analysis. & Obj.~5 & MP4, PNG visualisations alongside NumPy array (NPY) and JSON exports (§\ref{sec:methodology_system}). \\
 \bottomrule
 \end{tabular}
 \caption[Functional and non-functional requirements.]{Functional (FR) and non-functional (NFR) requirements, with the

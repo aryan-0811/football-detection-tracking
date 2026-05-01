@@ -1,6 +1,131 @@
 \chapter{Conclusion}
 \label{ch:conclusions}
 
-\section{Summary}
+\section{Summary of Achievements}
+\label{sec:summary_achievements}
+
+This work has presented an end-to-end pipeline for tactical analysis of broadcast association football video, integrating detection, multi-object tracking, identity assignment, camera registration and rule-based tactical inference into a single system. The architecture comprises a generic player-and-ball detector, a ball-specialist detector with a temporal-coherence filter, ByteTrack-based tracking augmented with track-level smoothing, a SigLIP-based team classifier with warmup-phase clustering and goalkeeper resolution, stride-cached pitch-keypoint regression for camera registration, and downstream modules for pass detection, offside checking, statistics accumulation, and \(\gamma\)-corrected heatmap rendering, all synchronised by a common bird's-eye renderer.
+
+All four success criteria established in Chapter~\ref{ch:introduction} are met. Generic detection achieves \(\textrm{mAP}@50 = 0.855\) (Section~\ref{sec:eval_detection}), exceeding the 0.80 threshold; the ball-class shortfall of the generic model is repaired by the dedicated ball detector at \(\textrm{mAP}@50 = 0.950\). Tracking attains \(\textrm{HOTA} = 66.8\) on a combined SportsMOT and broadcast evaluation set (Section~\ref{sec:eval_tracking}), well above the 0.45 target, with ByteTrack outperforming BoT-SORT on HOTA, IDF1 and identity switches and consequently retained as the deployed tracker. Team assignment reaches a mean macro-\(F_1\) of 0.993 across three independent broadcast clips under the deployment-realistic full-frame protocol (Section~\ref{sec:eval_team}), comfortably exceeding the 0.85 target. Tactical outputs are qualitatively coherent (Section~\ref{sec:eval_tactical}): pass detection achieves \(F_1 = 0.903\), all ten flagged offside events are positionally correct, and the bird's-eye and heatmap renderings agree with frame-level evidence.
+
+Beyond meeting these targets, the principal contribution is integrative: the unification of detection, tracking, identity, geometry and tactical inference into a single coherent system that produces tactical analysis from broadcast video without manual annotation at inference time. Within that system, several components are themselves original to this work --- warmup-phase team clustering, torso-cropped embedding, track-level identity smoothing, the goalkeeper resolver, automatic attacking-direction inference for the offside checker, the ball-detector temporal-coherence filter, stride-cached keypoint inference, the \(\gamma\)-corrected heatmap, and the bird's-eye renderer --- and their orchestration is what enables the end-to-end behaviour reported in Chapter~\ref{ch:evaluation}.
+
+\section{Critical Reflection}
+\label{sec:critical_reflection}
+
+The integrative thesis of this project --- that broadcast tactical analysis is best
+approached as a system of specialist subsystems rather than as a single monolithic
+model --- was vindicated by Chapter~\ref{ch:evaluation}. Several individual design
+decisions were not obvious a priori and could plausibly have failed: the choice to
+deploy a dedicated ball detector at $1280 \times 1280$ rather than rely on the generic
+model, the use of torso-cropped SigLIP embeddings with a warmup-phase clustering pass
+rather than per-frame supervised classification, and the retention of ByteTrack's
+unmatched-track cascade on broadcast footage despite the domain gap from SportsMOT.
+Each of these survived contact with the evaluation set, and the resulting subsystems
+compose without further tuning at integration time. This composability is the strongest
+evidence that the architectural choices in Chapter~\ref{ch:methodology} were sound.
+
+Three failure modes are nonetheless attributable to specific design decisions rather
+than to data or compute limits. First, pitch-space reprojection error
+(Section~\ref{sec:eval_pitch}) is metre-scale because the homography is fit by
+unweighted DLT; a single mis-localised keypoint contaminates the entire transformation,
+and the consequence is that tactical-scale spatial claims survive but sub-metre
+geometric claims do not. Second, the per-track speed cap of $40\,\text{km}\,\text{h}^{-1}$
+introduced as a defence against homography-induced jitter is binding for the majority
+of stable tracks (Section~\ref{sec:eval_runtime}); distance and average-speed
+measurements remain reliable, but the peak-speed signal is compressed by the cap rather
+than by physiology. Third, the possession-attribution rule is stateless --- the nearest
+player to the ball at each frame is declared the holder --- and consequently same-team
+transitions where the ball is briefly loose between teammates are misclassified as
+passes (Section~\ref{sec:eval_failures}). Each of these is the direct consequence of an
+explicit modelling choice rather than an implementation defect.
+
+With hindsight, two interventions would have changed the evaluation profile materially
+and neither requires substantial new infrastructure: replacing the DLT solver with a
+RANSAC-based robust fit, and replacing the per-frame possession rule with a
+$K$-frame-persistent state machine. Both are interventions of well under fifty lines
+each, and both target the failure modes that most constrain the strength of the claims
+this work can defend. Their late position in the development schedule, rather than
+their technical difficulty, is the honest reason they were not delivered.
 
 \section{Future Work}
+\label{sec:future_work}
+
+The limitations identified in Section~\ref{sec:critical_reflection} suggest a clear
+order of priorities for further development. The proposals below are grouped by what
+they would change about the system: three target the accuracy of geometric and tactical
+claims, two target throughput, and one underwrites the evaluation infrastructure that
+any of the others would ultimately be measured against.
+
+\textit{Robust homography estimation.} The most impactful single change is replacement
+of the unweighted DLT homography solver with a RANSAC-based robust fit (e.g.\
+\texttt{cv2.findHomography} with \texttt{method=cv2.RANSAC} and a reprojection threshold
+of 5\,px). The unweighted solver is dominated by its worst-localised keypoint, and on
+broadcast footage with partial pitch visibility this produces the metre-scale
+reprojection errors of Section~\ref{sec:eval_pitch}. A robust fit would reject keypoint
+outliers automatically and is expected to reduce reprojection error on bad-frame
+outliers by an order of magnitude, lifting the geometric ceiling of every downstream
+module that depends on pitch-space coordinates.
+
+\textit{A temporal possession state machine.} The same-team possession-transition false
+positives identified in Section~\ref{sec:eval_failures} are the only unmitigated
+failure mode in the tactical-output evaluation, and they follow directly from the
+per-frame nearest-ball-holder rule. A possession state machine that requires a
+candidate holder to be the nearest player for $K$ consecutive frames before declaring a
+transition would absorb the brief loose-ball intervals during teammate exchanges,
+eliminating the dominant pass-detection error class without affecting genuine
+inter-team transitions, which persist for many frames.
+
+\textit{Per-track Kalman filtering with bounded acceleration.} The
+$40\,\text{km}\,\text{h}^{-1}$ speed cap is binding for the majority of stable tracks
+(Section~\ref{sec:eval_runtime}) because it was introduced as a blunt defence against
+homography-induced jitter rather than as a physical constraint. Replacing it with a
+per-track Kalman filter constrained by a physiological acceleration bound would reject
+the same jitter without compressing the peak-speed signal, recovering an output channel
+that the current pipeline reports but cannot defend.
+
+\textit{Team-classifier compute reduction.} The team classifier accounts for 45.8\% of
+pipeline runtime (Section~\ref{sec:eval_runtime}) because SigLIP embeddings are
+recomputed per frame for every track. Two interventions are independently effective and
+may compose: caching embeddings at the track level and re-embedding only on
+identity-changed or every-$N$th frames, and substituting the SigLIP backbone for a
+lighter visual encoder fine-tuned on the warmup-phase clusters. Either alone would be
+expected to recover roughly half the team-classifier cost, bringing throughput close to
+1\,fps on the M2 Pro reference hardware.
+
+\textit{Real-time deployment.} The remaining ten-fold gap to live throughput on
+consumer hardware is dominated by the ball detector at $1280\times1280$
+(Section~\ref{sec:eval_runtime}). 8-bit integer (INT8) post-training quantisation combined with
+substitution of the current detector backbone for a lighter YOLO variant (the
+\texttt{s} or \texttt{n} configurations) trades approximately 3--5 percentage points of
+mAP for an order-of-magnitude throughput gain, and would bring live broadcast analysis
+within reach of mid-tier consumer GPUs without disturbing the rest of the pipeline.
+
+\textit{A hand-labelled multi-clip benchmark.} Every claim above would benefit from
+sharper measurement than the three-clip evaluation set permits. A hand-labelled corpus
+on the order of fifteen to twenty broadcast clips, with frame-level team labels,
+ball-possession ground truth, and identity-preserving track annotations, would enable
+per-frame $F_1$ on team classification, full HOTA on broadcast tracking, and pass- and
+offside-detection metrics directly comparable to those reported in the published
+literature. This is the single largest evaluation upgrade available, and it is the
+precondition for treating any of the preceding improvements as definitively measured
+rather than plausibly motivated.
+
+\section{Closing Statement}
+\label{sec:closing_statement}
+
+The aim stated in Chapter~\ref{ch:introduction} was an automated pipeline for the
+detection, tracking and tactical analysis of broadcast football video, evaluated
+against four quantitative success criteria. Each criterion has been met, and the
+pipeline operates end-to-end on unseen broadcast footage without manual annotation at
+inference time. The contribution this work defends, however, is not any individual
+component --- detector accuracy, tracker HOTA and team-assignment $F_1$ are each
+within reach of off-the-shelf models in isolation --- but their integration into a
+single coherent system whose tactical outputs are internally consistent and
+quantitatively verifiable. The scope is correspondingly bounded: this is a
+tactical-analysis tool whose claims are defensible at the metre and second scale, not
+a sub-metre geometric reconstruction system, and the limitations identified in
+Section~\ref{sec:critical_reflection} mark the perimeter of what the present
+evaluation can support. Within that perimeter, the system meets its aims, and the
+future work of Section~\ref{sec:future_work} identifies the path along which that
+perimeter can be honestly extended.
