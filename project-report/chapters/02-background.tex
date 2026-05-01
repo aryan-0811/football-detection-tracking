@@ -126,11 +126,6 @@ final outputs.
 \section{Machine Learning and Computer Vision Foundations}
 \label{sec:ml-cv-foundations}
 
-This section introduces the machine learning and computer 
-vision concepts on which the project depends, so that the 
-project-specific methods in later sections are accessible 
-to a reader without prior familiarity with these techniques.
-
 \subsection{Supervised Learning for Visual Recognition}
 \label{sec:supervised-learning}
 
@@ -287,11 +282,7 @@ video.
 
 Object detection is the task of locating and classifying 
 objects within an image. In broadcast football the relevant 
-objects are players, goalkeepers, referees, and the ball, 
-and errors at this stage propagate through the rest of the 
-pipeline: missed players degrade tracking, inaccurate boxes 
-corrupt pitch projection, and missed ball detections 
-undermine possession and pass reasoning.
+objects are players, goalkeepers, referees, and the ball.
 
 Formally, a detector maps an input image \(I\) to a set of 
 predictions
@@ -468,36 +459,14 @@ the final detection set.
     \label{fig:yolo_architecture}
 \end{figure}
 
-\paragraph{How boxes are predicted.} Rather than predict 
-absolute pixel coordinates, the detection head predicts 
-\emph{adjustments} relative to a known reference, which is 
-more numerically stable to train. In the original 
-anchor-based design, each spatial location in the feature 
-map is associated with a set of \emph{anchor boxes} — prior 
-guesses of likely object shapes, with width \(p_w\) and 
-height \(p_h\). For an anchor at grid-cell offset 
-\((c_x, c_y)\), the network predicts four numbers 
-\((t_x, t_y, t_w, t_h)\) that are decoded into a bounding 
-box \((b_x, b_y, b_w, b_h)\) by
-\[
-    b_x = \sigma(t_x) + c_x, \qquad
-    b_y = \sigma(t_y) + c_y,
-\]
-\[
-    b_w = p_w\, e^{t_w}, \qquad
-    b_h = p_h\, e^{t_h},
-\]
-where \(\sigma\) denotes the sigmoid 
-function~\cite{redmon2018yolov3}. The sigmoid keeps the 
-predicted centre inside its grid cell, and the exponential 
-keeps the predicted width and height positive while 
-expressing them as multiplicative deviations from the 
-anchor's prior shape. Anchor-\emph{free} variants used in 
-YOLOv8~\cite{Jocher2023} drop the priors 
-\((p_w, p_h)\) altogether and instead regress the four 
-sides of the box directly as distances from each 
-feature-map location — a simpler design that removes a 
-hand-tuned hyperparameter.
+\paragraph{How boxes are predicted.} Rather than predicting absolute pixel
+coordinates directly, the detection head predicts box geometry relative to each
+feature-map location, which is more numerically stable to train. Earlier
+YOLO variants used anchor boxes, which are hand-defined prior shapes that the
+network adjusts during prediction~\cite{redmon2018yolov3}. YOLOv8 instead adopts
+an anchor-free design in which each feature-map location directly regresses the
+four sides of the bounding box as distances from that location~\cite{Jocher2023}.
+This removes the need to tune anchor priors and simplifies the detection head.
 
 \paragraph{Training objective.} YOLO is trained to 
 minimise a weighted sum of three losses, one for each 
@@ -520,14 +489,6 @@ question \emph{is something here?} independently of
 visually — as players and goalkeepers do in broadcast 
 football.
 
-\paragraph{Relevance to broadcast football.} Multi-scale 
-feature extraction is what makes YOLO viable on broadcast 
-footage. Player sizes span a wide range within any single 
-frame, and the ball is often only a handful of pixels 
-across. By combining fine- and coarse-resolution feature 
-maps in a single network, the detector can localise 
-objects across this entire scale range.
-
 \section{Multi-Object Tracking}
 \label{sec:background_tracking}
 
@@ -536,11 +497,7 @@ each frame, but does not say whether a player detected in
 one frame is the same player detected in the next. 
 Multi-object tracking (MOT) addresses this by linking 
 detections over time and assigning a persistent identity 
-to each object~\cite{MOTChallenge2021}. Tracking is 
-essential to this project because every downstream output — 
-heatmaps, distance and speed estimates, team assignment, 
-possession reasoning, and offside analysis — requires 
-following the same player across frames.
+to each object~\cite{MOTChallenge2021}.
 
 Formally, let
 \begin{equation}
@@ -743,13 +700,11 @@ threshold-independent summary.
 \label{sec:background_team_id}
 
 Object detection and tracking determine where players are 
-and how they move, but neither directly recovers which team 
-each player belongs to. Team identity is not produced by a 
-generic detector, and manually labelling every player per 
-match would defeat the purpose of an automated pipeline. 
-Because players on the same team share a visually similar 
-kit, the task is naturally cast as an unsupervised grouping 
-problem on player appearance~\cite{Spagnolo2007}.
+and how they move, but neither recovers which team each 
+player belongs to. Because players on the same team share 
+a visually similar kit, the task is naturally cast as an 
+unsupervised grouping problem on player 
+appearance~\cite{Spagnolo2007}.
 
 \subsection{Team Identification as Clustering}
 \label{subsec:team_id_clustering}
@@ -832,18 +787,10 @@ lower-dimensional space \(\mathbb{R}^{d'}\) with
     \label{eq:team_dimred}
 \end{equation}
 
-Principal Component Analysis (PCA) is the classical linear 
-choice. Given centred embeddings stacked as 
-\(Z \in \mathbb{R}^{N \times d}\), PCA computes the 
-eigendecomposition of the sample covariance matrix 
-\(\Sigma = \tfrac{1}{N} Z^\top Z\) and projects onto the 
-top-\(d'\) eigenvectors of \(\Sigma\), yielding the 
-linear subspace that maximises preserved variance. PCA is 
-fast and deterministic but its linearity means it cannot 
-unfold curved manifold structure that embedding models 
-often produce.
-
-UMAP (Uniform Manifold Approximation and Projection) is a 
+The classical linear choice is Principal Component Analysis 
+(PCA), but its linearity cannot unfold the curved manifold 
+structure that deep embedding models often produce. UMAP 
+(Uniform Manifold Approximation and Projection) is a 
 non-linear alternative that constructs a weighted 
 neighbourhood graph in the high-dimensional space and 
 optimises a low-dimensional layout to preserve its local 
@@ -993,17 +940,12 @@ conditioning~\cite{hartley2003multiple} before solving.
 Real correspondences contain both noise and outliers — 
 incorrectly localised keypoints whose error is large 
 enough to corrupt the least-squares estimate. Robust 
-estimation is therefore performed using Random Sample Consensus (RANSAC), which
-repeatedly samples minimal sets of four correspondences, 
-fits a candidate homography from each, and counts how 
-many of the remaining correspondences are consistent with 
-it (within a chosen reprojection threshold). The 
-homography with the largest consensus set is retained, and 
-the final estimate is refined by re-running DLT on its 
-inliers only. RANSAC tolerates outlier rates well above 
-50\%, which makes it the standard choice when 
-correspondences come from an automatic detector rather 
-than from manual annotation.
+estimators such as Random Sample Consensus (RANSAC) 
+mitigate this by fitting candidate homographies on minimal 
+correspondence sets and retaining the one with the largest 
+inlier consensus, tolerating outlier rates well above 
+50\% — the standard choice when correspondences come from 
+an automatic detector rather than manual annotation.
 
 \subsection{Pitch Keypoint Detection}
 \label{subsec:background_pitch_keypoints}
@@ -1167,14 +1109,11 @@ Total distance covered can then be approximated by summing the Euclidean displac
     \label{eq:distance_pitch_space}
 \end{equation}
 
-Finite differencing is intrinsically noise-amplifying. If 
-each pitch-space position carries independent Gaussian 
-localisation noise with variance \(\sigma_p^2\), the 
-variance of Equation~\ref{eq:velocity_pitch_space} is 
-\(2\sigma_p^2 / \Delta t^2\), so a small per-frame 
-localisation error becomes a large per-frame velocity 
-error. This is a property of the differencing operator 
-itself rather than of any particular pipeline.
+Finite differencing is intrinsically noise-amplifying: 
+small per-frame localisation errors become 
+disproportionately large per-frame velocity errors. This 
+is a property of the differencing operator itself rather 
+than of any particular pipeline.
 
 \subsection{Possession via Nearest-Player Assignment}
 \label{subsec:background_possession_passes}
@@ -1200,29 +1139,15 @@ them than to any other player. A pass corresponds to a
 transition of \(h_t\) between distinct players, normally 
 on the same team.
 
-A more refined formulation is \emph{pitch control}, in 
-which each player exerts a continuous influence over the 
-pitch as a function of position, velocity, and 
-orientation, and the ball is assigned probabilistically to 
-the player with the greatest influence at its current 
-location~\cite{fernandez2018wide}. Each player \(i\) is 
-associated with an influence function 
-\(I^{(i)}(\mathbf{r}, t)\) — typically a bivariate 
-Gaussian whose mean is offset forward of the player along 
-their velocity vector and whose covariance grows with 
-speed — and the probability that player \(i\) controls 
-location \(\mathbf{r}\) at time \(t\) is
-\[
-    P^{(i)}(\mathbf{r}, t)
-    =
-    \frac{I^{(i)}(\mathbf{r}, t)}
-         {\sum_{j} I^{(j)}(\mathbf{r}, t)}.
-\]
-Pitch control captures dynamic context that nearest-player 
-assignment ignores — momentum, reach, time-to-arrive — but 
-requires reliable velocities and orientations, and 
-therefore higher-quality input than nearest-player 
-assignment.
+More refined formulations such as \emph{pitch 
+control}~\cite{fernandez2018wide} weight each player's 
+influence over the pitch by position, velocity, and 
+orientation, capturing dynamic context such as momentum, reach, 
+time-to-arrive that nearest-player assignment ignores. 
+This expressiveness comes at the cost of requiring reliable 
+per-player velocities and orientations, which in turn 
+demand higher upstream localisation quality than the 
+nearest-player rule.
 
 \subsection{Offside Rule Formalisation}
 \label{subsec:background_offside}
