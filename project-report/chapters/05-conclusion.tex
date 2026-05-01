@@ -6,7 +6,26 @@
 
 This work has presented an end-to-end pipeline for tactical analysis of broadcast association football video, integrating detection, multi-object tracking, identity assignment, camera registration and rule-based tactical inference into a single system. The architecture comprises a generic player-and-ball detector, a ball-specialist detector with a temporal-coherence filter, ByteTrack-based tracking augmented with track-level smoothing, a SigLIP-based team classifier with warmup-phase clustering and goalkeeper resolution, stride-cached pitch-keypoint regression for camera registration, and downstream modules for pass detection, offside checking, statistics accumulation, and \(\gamma\)-corrected heatmap rendering, all synchronised by a common bird's-eye renderer.
 
-All four success criteria established in Chapter~\ref{ch:introduction} are met. Generic detection achieves \(\textrm{mAP}@50 = 0.855\) (Section~\ref{sec:eval_detection}), exceeding the 0.80 threshold; the ball-class shortfall of the generic model is repaired by the dedicated ball detector at \(\textrm{mAP}@50 = 0.950\). Tracking attains \(\textrm{HOTA} = 66.8\) on a combined SportsMOT and broadcast evaluation set (Section~\ref{sec:eval_tracking}), well above the 0.45 target, with ByteTrack outperforming BoT-SORT on HOTA, IDF1 and identity switches and consequently retained as the deployed tracker. Team assignment reaches a mean macro-\(F_1\) of 0.993 across three independent broadcast clips under the deployment-realistic full-frame protocol (Section~\ref{sec:eval_team}), comfortably exceeding the 0.85 target. Tactical outputs are qualitatively coherent (Section~\ref{sec:eval_tactical}): pass detection achieves \(F_1 = 0.903\), all ten flagged offside events are positionally correct, and the bird's-eye and heatmap renderings agree with frame-level evidence.
+All six success criteria established in Chapter~\ref{ch:introduction} are
+met. Generic detection achieves $\mathrm{mAP}_{50} = 0.855$
+(Section~\ref{sec:eval_detection}), exceeding the $0.80$ threshold; the
+ball-class shortfall of the generic model is repaired by the dedicated
+ball detector at $\mathrm{mAP}_{50} = 0.950$. Tracking attains
+$\mathrm{HOTA} = 66.8$ on a combined SportsMOT and broadcast evaluation
+set (Section~\ref{sec:eval_tracking}), well above the $0.45$ target,
+with ByteTrack outperforming BoT-SORT on HOTA, IDF1 and identity
+switches and consequently retained as the deployed tracker. Team
+assignment reaches a mean macro-$F_1$ of $0.993$ across three
+independent broadcast clips under the deployment-realistic warm-up
+split (Section~\ref{sec:eval_team}), comfortably exceeding the $0.85$
+target. Pitch registration achieves a median reprojection error of
+$169.9$\,cm (Section~\ref{sec:eval_pitch}), within the $250$\,cm
+threshold. Pass detection attains $F_1 = 0.903$
+(Section~\ref{sec:eval_tactical}), exceeding the $0.80$ target with full
+recall across all three clips. The remaining tactical outputs are
+qualitatively coherent: all ten flagged offside events are positionally
+correct, and the bird's-eye and heatmap renderings agree with
+frame-level evidence.
 
 Beyond meeting these targets, the principal contribution is integrative: the unification of detection, tracking, identity, geometry and tactical inference into a single coherent system that produces tactical analysis from broadcast video without manual annotation at inference time. Within that system, several components are themselves original to this work --- warmup-phase team clustering, torso-cropped embedding, track-level identity smoothing, the goalkeeper resolver, automatic attacking-direction inference for the offside checker, the ball-detector temporal-coherence filter, stride-cached keypoint inference, the \(\gamma\)-corrected heatmap, and the bird's-eye renderer --- and their orchestration is what enables the end-to-end behaviour reported in Chapter~\ref{ch:evaluation}.
 

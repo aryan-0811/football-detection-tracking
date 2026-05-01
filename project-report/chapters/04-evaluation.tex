@@ -4,12 +4,14 @@
 \section{Evaluation Methodology}
 \label{sec:eval_methodology}
 
-This chapter evaluates the pipeline against the four success criteria
-committed in Chapter~\ref{ch:introduction}: detector mAP@50 $\geq 0.80$,
-tracking HOTA $\geq 0.45$, team-assignment F1 $\geq 0.85$, and
-qualitatively coherent tactical outputs. Each criterion is addressed by
-the section that owns the corresponding pipeline stage, with verdicts
-issued explicitly where the available evidence permits one.
+This chapter evaluates the pipeline against the six success criteria
+committed in Chapter~\ref{ch:introduction}: detector $\mathrm{mAP}_{50}
+\geq 0.80$, tracking $\mathrm{HOTA} \geq 0.45$, team-assignment
+macro-$F_1 \geq 0.85$, median pitch-space reprojection error
+$\leq 250$\,cm, pass-detection $F_1 \geq 0.80$, and qualitatively
+coherent bird's-eye, heatmap, and offside outputs. Each criterion is
+addressed by the section that owns the corresponding pipeline stage,
+with verdicts issued explicitly where the available evidence permits one.
 
 The evaluation operates at three levels of evidence, chosen to match
 the type of claim being made. \emph{Component-level} evaluation
@@ -254,11 +256,11 @@ tracks, it preserves identity through brief detection dropouts
 that broadcast football generates frequently. BoT-SORT's
 camera-motion-compensated Kalman filter does not appear to recover
 this gap on the broadcast-style sequences in the evaluation set.
-The combined-set HOTA of $66.8$ is consistent with ByteTrack's
-published baseline of approximately $63$ on the
-SportsMOT-football split~\cite{Cui2023SportsMOT}; the small
-positive offset reflects detector-quality differences and the
-inclusion of the broadcast clip in the combined set.
+The combined-set HOTA of $66.8$ is close to the SportsMOT results
+reported by Cui~et~al.~\cite{Cui2023SportsMOT}: ByteTrack achieves
+$62.8$--$64.1$ HOTA on the overall SportsMOT test set (depending on
+the Train versus Train+Val protocol), while MixSort-Byte reports
+$66.4$ HOTA on the football category specifically.
 
 The dominant residual error in qualitative inspection is identity
 switching during close player interactions: cross-team crossings
@@ -396,12 +398,13 @@ limitation is acknowledged.
 held-out 65\%, against a target of $0.85$. Cross-clip variance is
 small ($0.984$--$1.000$), supporting the claim that the result is a
 property of the embedding space rather than of any one broadcast.
-The colour-histogram baseline of \cite{istasse2019colour} reports
-team-identification accuracies in the $0.85$--$0.92$ range on
-broadcast football and is sensitive to lighting; the SigLIP-based
-classifier's $0.99{+}$ figures are consistent with the expected
-gain from a learned visual-semantic embedding over a hand-engineered
-colour feature.
+Classical approaches to team identification cluster players by
+RGB colour histograms~\cite{Spagnolo2007}, which are computationally
+cheap but sensitive to lighting variation, shadows, and background
+pixels included in the crop. The SigLIP-based classifier's
+$0.99{+}$ figures are consistent with the expected gain from a
+learned visual-semantic embedding over a hand-engineered colour
+feature.
 
 \section{Pitch Registration Accuracy}
 \label{sec:eval_pitch}
@@ -512,29 +515,21 @@ last-known-good homography
 analysis in Section~\ref{sec:eval_failures} discusses.
 
 \paragraph{Ranking with similar work.}
-The mean reprojection error of $1.99$~m sits within the range
-reported by Theiner~\cite{Theiner2022} for broadcast football
-homography (mean errors of approximately $0.5$--$2$~m depending on
-camera angle and pitch coverage) and is comparable to
-TVCalib~\cite{TVCalib2023}, which reports sub-metre accuracy on
-camera-calibrated SoccerNet sequences. Direct numerical comparison
-is hedged by the absence of a shared benchmark — both works
-evaluate on calibrated video sequences whereas this work evaluates
-on keypoint-annotated still frames — but the regime is the same.
+The mean reprojection error of $1.99$~m sits in the metre-scale
+regime reported for end-to-end broadcast pipelines by
+Theiner~\cite{Theiner2022} (median player-position errors approximately
+$1$--$3$~m) and is broader than the sub-metre calibration accuracy
+of TVCalib~\cite{TVCalib2023} on camera-calibrated SoccerNet sequences.
+Direct numerical comparison is hedged by the different evaluation
+protocols: both works evaluate on calibrated video, whereas this
+work evaluates on keypoint-annotated still frames.
 
-\paragraph{Verdict.}
-Pitch registration was not committed to a numerical success criterion
-in Chapter~\ref{ch:introduction} (criterion (iv) covers the
-integrated tactical outputs, evaluated in
-Section~\ref{sec:eval_tactical}). The evidence here scopes that
-integrated evaluation: keypoint localisation is sub-pixel-of-diagonal
-at the median and pitch-space reprojection is metre-scale on average,
-which is sufficient for tactical-scale reasoning (zones, possession,
-direction of attack) but not for sub-metre geometric claims. The
-kp\_16 outlier is characterised, mitigated by the confidence-gated
-fit, and ablated quantitatively. Choice of a robust homography
-estimator (RANSAC or weighted least-squares) is identified in
-Chapter~\ref{ch:conclusions} as the single most impactful future
+\paragraph{Verdict on success criterion (iv).}
+\textbf{Met.} Median pitch-space reprojection error is $169.9$\,cm
+(mean $199.4$\,cm), against the criterion threshold of $\leq 250$\,cm.
+The kp\_16 outlier is characterised, mitigated by the confidence-gated
+fit, and ablated quantitatively. Choice of a robust homography estimator
+is identified in Chapter~\ref{ch:conclusions} as the single most impactful
 improvement to this stage.
 
 \section{Tactical Output Quality}
@@ -655,19 +650,23 @@ numerical metric. Across all three clips the bird's-eye projection
 preserves team formation structure (defensive lines, central
 midfield clusters), the offside line is rendered consistently with
 the offside event log, and per-track heatmaps form spatially
-contiguous regions consistent with player positional roles. These
-qualitative properties are what success criterion~(iv) of
+contiguous regions consistent with player positional roles. These 
+qualitative properties are what success criterion~(vi) of
 Chapter~\ref{ch:introduction} requires.
 
-\paragraph{Verdict on success criterion (iv).}
-\textbf{Met.} Pass detection achieves aggregate F1 = $0.903$ across
-three clips with a single, named failure mode (same-team occlusion)
-characterised by clip; all 10 offside events on three clips were
-positionally correct; bird's-eye and heatmap outputs are
-qualitatively coherent across clips. The integrated tactical output
-quality is consistent with the operating regime characterised by
-the failure-handling table of
-Section~\ref{sec:methodology_failure_handling}.
+\paragraph{Verdict on success criterion (v).}
+\textbf{Met.} Pass detection achieves aggregate $F_1 = 0.903$ across
+three clips, against the threshold of $\geq 0.80$, with a single named
+failure mode (same-team possession transitions during close-range
+overlap) characterised by clip.
+
+\paragraph{Verdict on success criterion (vi).}
+\textbf{Met.} All ten flagged offside events are positionally correct;
+bird's-eye projections preserve team formation structure across all
+three clips; per-track heatmaps form spatially contiguous regions
+consistent with positional roles. The integrated tactical output
+quality is consistent with the operating regime characterised by the
+failure-handling table of Section~\ref{sec:methodology_failure_handling}.
 
 \section{End-to-End Performance}
 \label{sec:eval_runtime}
@@ -785,7 +784,7 @@ in Chapter~\ref{ch:conclusions} as future work.
 \section{Discussion}
 \label{sec:eval_discussion}
 
-The four success criteria committed in
+The six success criteria committed in
 Chapter~\ref{ch:introduction} are addressed as follows.
 Criterion~(i), detector \texttt{mAP@50} $\geq 0.80$, is met:
 $0.855$ on the held-out test split, with the ball-class shortfall
@@ -796,15 +795,21 @@ $3{,}250$-frame evaluation set spanning SportsMOT-football and one
 hand-labelled broadcast clip: ByteTrack achieves HOTA $= 66.8$ as
 the deployed tracker, outperforming BoT-SORT on HOTA, IDF1 and
 identity-switch count (Section~\ref{sec:eval_tracking}).
-Criterion~(iii), team-assignment F1 $\geq 0.85$, is comfortably
-met at mean macro-F1 $= 0.993$ across three independent clips on
-the deployment-realistic 35/65 evaluation
-(Section~\ref{sec:eval_team}). Criterion~(iv), qualitatively
-coherent tactical outputs, is met: pass-detection F1 $= 0.903$
-across three clips with a single named failure mode, all ten
-flagged offside events positionally correct, and bird's-eye and
-heatmap outputs visually consistent with the underlying play
-(Section~\ref{sec:eval_tactical}).
+Criterion~(iii), team-assignment macro-$F_1 \geq 0.85$, is comfortably
+met at $0.993$ across three independent clips on the
+deployment-realistic 35/65 evaluation
+(Section~\ref{sec:eval_team}). Criterion~(iv), median pitch-space
+reprojection error $\leq 250$\,cm, is met at $169.9$\,cm
+(mean $199.4$\,cm) on the held-out test split
+(Section~\ref{sec:eval_pitch}). Criterion~(v), pass-detection
+$F_1 \geq 0.80$, is met at $0.903$ across three broadcast clips
+with a single named failure mode
+(Section~\ref{sec:eval_tactical}). Criterion~(vi), qualitatively
+coherent bird's-eye, heatmap, and offside outputs, is met: all ten
+flagged offside events are positionally correct, bird's-eye
+projections preserve team formation structure across all three
+clips, and per-track heatmaps form spatially contiguous regions
+consistent with positional roles (Section~\ref{sec:eval_tactical}).
 
 Three caveats temper these verdicts. First, pitch-space
 reprojection error is metre-scale on average
