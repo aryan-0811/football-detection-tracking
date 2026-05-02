@@ -19,7 +19,7 @@ Generic detection achieves $\mathrm{mAP}_{50} = 0.855$
 (Section~\ref{sec:eval_detection}), exceeding the $0.80$ threshold; the
 generic model's ball-class shortfall is repaired by the dedicated ball
 detector at $\mathrm{mAP}_{50} = 0.950$. Tracking attains
-$\mathrm{HOTA} = 66.8$ on a combined SportsMOT and broadcast evaluation set
+$\mathrm{HOTA} = 0.668$ on a combined SportsMOT and broadcast evaluation set
 (Section~\ref{sec:eval_tracking}), above the $0.45$ target, with
 ByteTrack outperforming BoT-SORT on HOTA, IDF1 and identity switches
 and retained as the deployed tracker. Team assignment reaches a mean
@@ -65,7 +65,7 @@ than to data or compute limits. First, pitch-space reprojection error
 (Section~\ref{sec:eval_pitch}) is metre-scale because the homography is fit by
 unweighted DLT; a single mis-localised keypoint contaminates the entire
 transformation, so tactical-scale spatial claims survive but sub-metre geometric
-claims do not. Second, the per-track $40\,\text{km}\,\text{h}^{-1}$ speed cap,
+claims do not. Second, the per-track 40\,km/h speed cap,
 introduced as a defence against homography-induced jitter, binds for most stable
 tracks (Section~\ref{sec:eval_runtime}); distance and average-speed measurements
 remain reliable, but the peak-speed signal is compressed by the cap rather than
@@ -92,8 +92,8 @@ claims, two target throughput, and one underwrites the evaluation infrastructure
 any of the others would ultimately be measured against.
 
 \textit{Robust homography estimation.} The single most impactful change is replacing
-the unweighted DLT homography solver with a RANSAC-based robust fit (e.g.\
-\texttt{cv2.\allowbreak{}findHomography} with \texttt{method=cv2.RANSAC} and a 5\,px reprojection
+the unweighted DLT homography solver with a RANSAC-based robust fit (e.g.\\
+\texttt{cv2.findHomography} with \texttt{method=cv2.RANSAC} and a 5\,px reprojection
 threshold). The unweighted solver is dominated by its worst-localised keypoint,
 which on broadcast footage with partial pitch visibility produces the metre-scale
 errors of Section~\ref{sec:eval_pitch}. A robust fit would reject keypoint outliers
@@ -111,7 +111,7 @@ pass-detection error class without affecting genuine inter-team transitions, whi
 persist over many frames.
 
 \textit{Per-track Kalman filtering with bounded acceleration.} The
-$40\,\text{km}\,\text{h}^{-1}$ speed cap is binding for the majority of stable tracks
+40\,km/h speed cap is binding for the majority of stable tracks
 (Section~\ref{sec:eval_runtime}) because it was introduced as a blunt defence against
 homography-induced jitter rather than as a physical constraint. Replacing it with a
 per-track Kalman filter constrained by a physiological acceleration bound would reject

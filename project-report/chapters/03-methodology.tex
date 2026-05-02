@@ -55,7 +55,7 @@ Section~\ref{subsec:background_player_projection}. All downstream analytics
 operate on these pitch-space positions (Section~\ref{sec:methodology_tactical}).
 
 A separate \emph{warmup phase} runs once at the start of each video, fitting
-the unsupervised SigLIP--UMAP--KMeans clusterer of Section~\ref{subsec:team_id_kmeans} on
+the unsupervised SigLIP--UMAP--K-Means clusterer of Section~\ref{subsec:team_id_kmeans} on
 player crops sampled from the first twenty seconds of footage. Although
 outside the per-frame loop, it operates on the same input, so the pipeline
 produces team labels without per-match labelling effort, directly
@@ -137,7 +137,7 @@ $\mathrm{HOTA} \geq 0.45$ on a labelled evaluation set.
 FR3 & Assign tracked players to teams without per-match manual labels,
 achieving macro-$F_1 \geq 0.85$ under a deployment-realistic warm-up split.
 & Obj.~3; SC~(iii)
-& SigLIP--UMAP--KMeans clustering with track-level smoothing and goalkeeper
+& SigLIP--UMAP--K-Means clustering with track-level smoothing and goalkeeper
 resolver (Sec.~\ref{sec:methodology_team}). \\
 
 FR4 & Project detections into pitch-space with median reprojection error
@@ -459,10 +459,10 @@ Ultralytics 8.4.21 on PyTorch 2.8.0 with the framework's default augmentation
 regime, completing in approximately 15 minutes. Full hyperparameters are
 catalogued in Section~\ref{subsec:methodology_reproducibility}.
 
-Held-out test mAP@50 reached 0.855, clearing the 0.80 threshold of SC~(i);
+Held-out test $\mathrm{mAP}_{50}$ reached 0.855, clearing the 0.80 threshold of SC~(i);
 full per-class metrics appear in Chapter~\ref{ch:evaluation}. One result
 motivates the section that follows: the Player, Goalkeeper, and Referee
-classes each reach mAP@50 above 0.98, but the Ball class achieves only 0.459
+classes each reach $\mathrm{mAP}_{50}$ above 0.98, but the Ball class achieves only 0.459
 with recall 0.393. The normalised confusion matrix shows 31\% of true balls
 misclassified as background and 40\% of Ball predictions being background
 false positives. This recall collapse on the ball --- alongside near-perfect
@@ -501,7 +501,7 @@ here because the marginal inference cost on a single-class head is small, and la
 backbones help on fine-grained small-object features. Training used the same
 $1280 \times 1280$ resolution and augmentation regime as the generic
 detector, ran for 150 epochs at batch size 8, and completed in approximately
-110 minutes. The resulting model achieves test mAP@50 of 0.950 and recall
+110 minutes. The resulting model achieves test $\mathrm{mAP}_{50}$ of 0.950 and recall
 0.896 --- a 49 percentage-point absolute improvement over the generic
 detector's ball performance (Table~\ref{tab:detection_ball_comparison}).
 
@@ -566,7 +566,7 @@ to losing it at the detector stage.
 \renewcommand{\arraystretch}{1.15}
 \begin{tabular}{lcccccc}
 \toprule
-\textbf{Detector} & \textbf{P} & \textbf{R} & \textbf{F1} & \textbf{mAP@50} & \textbf{mAP@50--95} \\
+\textbf{Detector} & \textbf{P} & \textbf{R} & \textbf{F1} & \textbf{$\mathrm{mAP}_{50}$} & \textbf{$\mathrm{mAP}_{50-95}$} \\
 \midrule
 Generic (Ball class)   & 0.818 & 0.393 & 0.531 & 0.459 & 0.194 \\
 Dedicated ball         & 0.964 & 0.896 & 0.929 & 0.950 & 0.556 \\
@@ -574,7 +574,7 @@ Dedicated ball         & 0.964 & 0.896 & 0.929 & 0.950 & 0.556 \\
 \end{tabular}
 \caption[Ball-class performance: generic vs.\ dedicated detector.]{Ball-class performance on the held-out test set: generic four-class
 detector versus dedicated single-class detector. The dedicated detector
-raises ball mAP@50 from 0.459 to 0.950 --- a 49 percentage-point absolute
+raises ball $\mathrm{mAP}_{50}$ from 0.459 to 0.950 --- a 49 percentage-point absolute
 improvement that motivates the two-detector architecture. Per-class metrics
 for all classes of the generic detector are reported in
 Chapter~\ref{ch:evaluation}.}
@@ -894,7 +894,7 @@ Producing per-player team labels without manual annotation addresses
 Objective~3 (Section~\ref{sec:aims}) and FR3. The problem is unsupervised:
 each match brings a novel pair of kits, no labelled training data is
 available, and the only signal is visual appearance. The pipeline uses the
-SigLIP--UMAP--KMeans formulation of Section~\ref{sec:background_team_id}
+SigLIP--UMAP--K-Means formulation of Section~\ref{sec:background_team_id}
 via the open-source \texttt{sports} library~\cite{roboflow_sports}, which
 supplies reference implementations of embedding extraction, dimensionality
 reduction, and clustering. The contribution here is the surrounding
@@ -915,9 +915,9 @@ discarded as unreliably small, and the survivors are torso-cropped
 (Section~\ref{subsec:methodology_torso_crop}). Crops are capped at
 \texttt{max\_warmup\_crops}=800 and passed in a single batch to
 \texttt{TeamClassifier.fit()}, which extracts SigLIP embeddings, projects
-them through UMAP, and fits a $k=2$ KMeans model.
+them through UMAP, and fits a $k=2$ K-Means model.
 
-Fitting once rather than incrementally is methodologically central. KMeans
+Fitting once rather than incrementally is methodologically central. K-Means
 is sensitive to the empirical distribution seen during fitting, so
 incremental or per-frame refitting would produce a moving cluster boundary
 --- a player whose embedding sat fractionally on one side in frame $t$
@@ -932,7 +932,7 @@ between fit stability and the embedding-extraction latency that dominates
 warmup time.
 
 Figure~\ref{fig:warmup_umap_diagnostic} shows representative torso crops
-and the resulting UMAP/KMeans separation.
+and the resulting UMAP/K-Means separation.
 
 \begin{figure}[!htbp]
     \centering
@@ -948,12 +948,12 @@ and the resulting UMAP/KMeans separation.
     \begin{subfigure}[t]{0.78\linewidth}
         \centering
         \includegraphics[width=\linewidth]{images/03-methodology/team_clusters_umap.png}
-        \caption{UMAP projection of SigLIP embeddings with $k=2$ KMeans labels.}
+        \caption{UMAP projection of SigLIP embeddings with $k=2$ K-Means labels.}
     \end{subfigure}
 
     \caption[Warmup-phase diagnostic for team assignment.]{Warmup-phase diagnostic for team assignment. (a) Representative
     torso crops sampled during the warmup period. (b) The corresponding SigLIP
-    embeddings after UMAP projection, coloured by the resulting $k=2$ KMeans
+    embeddings after UMAP projection, coloured by the resulting $k=2$ K-Means
     labels. The clear separation between the two groups supports the use of a
     per-video warmup phase to initialise team assignment before track-level
     temporal smoothing and goalkeeper resolution are applied.}
@@ -998,7 +998,7 @@ fall back to the raw per-frame prediction.
 \subsection{Goalkeeper Resolution}
 \label{subsec:methodology_gk_resolver}
 
-KMeans is fitted with $k=2$ for the two outfield teams. Competition rules
+K-Means is fitted with $k=2$ for the two outfield teams. Competition rules
 require goalkeeper kits to be visually distinct from both outfield kits and
 from each other, so neither fitted cluster reliably corresponds to a
 goalkeeper, and a goalkeeper's embedding can fall on either side of the
@@ -1225,9 +1225,9 @@ appear at inference. Disabling mosaic was therefore a deliberate departure
 motivated by the structural mismatch between the augmentation and the
 fixed-landmark task.
 
-The trained model achieves test detection mAP@50 of 0.995 (the pitch is, in
-practice, always present in broadcast frames) and test pose mAP@50 of 0.995
-with mAP@50--95 of 0.953. Per-keypoint mean errors cluster around four
+The trained model achieves test detection $\mathrm{mAP}_{50}$ of 0.995 (the pitch is, in
+practice, always present in broadcast frames) and test pose $\mathrm{mAP}_{50}$ of 0.995
+with $\mathrm{mAP}_{50-95}$ of 0.953. Per-keypoint mean errors cluster around four
 pixels, approximately 0.4\% of the image diagonal. One keypoint
 (\texttt{kp\_16}) is an outlier at 18.2 pixels, roughly four times the
 median; this is reported here for transparency and its effect on homography
@@ -1789,12 +1789,12 @@ separately in Chapter~\ref{ch:evaluation}.
 \midrule
 Detection pipeline & Visual inspection of bounding-box overlays on sampled frames; class-filter and confidence-threshold behaviour confirmed against schema. & Confirms downstream modules receive valid, correctly-classed detections. \\
 Ball filter & Spot checks on clips with detection gaps and on clips with rapid ball motion; verified displacement-gate rejection produced expected behaviour. & Confirms the temporal filter rejects implausible candidates without suppressing legitimate motion. \\
-Team classifier (warmup) & Inspection of the fitted UMAP projection and KMeans cluster boundary on the warmup crop set; confirmed both teams recovered as separated clusters. & Confirms the warmup fit produces a usable two-team boundary before per-frame prediction begins. \\
+Team classifier (warmup) & Inspection of the fitted UMAP projection and K-Means cluster boundary on the warmup crop set; confirmed both teams recovered as separated clusters. & Confirms the warmup fit produces a usable two-team boundary before per-frame prediction begins. \\
 Track-level smoothing & Comparison of raw per-frame versus smoothed team labels for a sample of tracks across development clips. & Confirms smoothing reduces frame-level noise without lagging genuine track-identifier changes. \\
 Homography estimator & Verified that projected pitch coordinates of detected players fall within pitch bounds on the majority of frames; manual sanity-check of the bird's-eye view. & Detects ill-conditioned or failed homography fits that would otherwise corrupt downstream analytics. \\
 Possession module & Frame-level inspection of nearest-player assignments on possession-of-ball sequences from development clips. & Confirms proximity-based assignment behaves as intended in congested midfield scenes. \\
 Pass and offside detection & Manual inspection of detected pass and offside events against the source footage. & Distinguishes genuine passes from possession noise; confirms the offside criterion fires only at pass moments. \\
-Output generation & Verified that all four output formats (annotated MP4, bird's-eye MP4, heatmap PNGs, JSON event log and stats) are produced for each run-mode preset. & Ensures end-to-end pipeline completeness across all modes. \\
+Output generation & Verified that all expected output categories (annotated MP4, bird's-eye MP4, heatmap PNGs, JSON event log and stats) are produced for each run-mode preset. & Ensures end-to-end pipeline completeness across all modes. \\
 \bottomrule
 \end{tabular}
 \caption[Component-level verification performed during development.]{Component-level verification performed during development. Each row
@@ -2093,7 +2093,7 @@ and the residual limitation the mitigation does not fully resolve.
 \toprule
 \textbf{Decision} & \textbf{Alternative} & \textbf{Rationale} & \textbf{Trade-off} \\
 \midrule
-Two-detector architecture & Single multi-class detector & 49\,pp ball-class mAP@50 improvement on the same task (§\ref{sec:methodology_detection}). & Second inference pass per frame. \\
+Two-detector architecture & Single multi-class detector & 49\,pp ball-class $\mathrm{mAP}_{50}$ improvement on the same task (§\ref{sec:methodology_detection}). & Second inference pass per frame. \\
 Mosaic disabled for keypoint training & Default Ultralytics augmentation & Pitch geometry has fixed structure that mosaic fragments into disjoint quadrants (§\ref{sec:methodology_pitch}). & Fewer augmented training samples; longer training to convergence. \\
 Stride-15 cached homography & Per-frame keypoint inference & Keypoint inference dominates pipeline latency; broadcast camera motion is slow (§\ref{sec:methodology_pitch}). & Brief projection drift during rapid camera moves. \\
 $k=2$ team clusterer + spatial GK resolver & Three-cluster team model & $k=3$ on a heavily two-team-dominated crop set is poorly conditioned (§\ref{sec:methodology_team}). & Requires a separate goalkeeper-handling pathway. \\

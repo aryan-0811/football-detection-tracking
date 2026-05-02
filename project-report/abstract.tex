@@ -13,27 +13,28 @@ that converts broadcast football video into tactical outputs: bird's-eye
 visualisations, heatmaps, possession assignments, pass and offside event
 logs, and per-player match statistics. The system combines a YOLOv8
 four-class detector with a dedicated ball detector, ByteTrack multi-object
-tracking, unsupervised SigLIP--UMAP--KMeans team classification, and a
+tracking, unsupervised SigLIP--UMAP--K-Means team classification, and a
 YOLOv8-pose pitch-keypoint detector feeding a stride-cached DLT homography
 estimator. All downstream reasoning is performed in pitch-space
 coordinates.
 
-All four pre-registered success criteria are met. The generic detector
+All six pre-registered success criteria are met within the defined evaluation setting. The generic detector
 achieves test $\mathrm{mAP}_{50}=0.855$, while the dedicated ball detector
 improves ball-class $\mathrm{mAP}_{50}$ from $0.459$ to $0.950$.
-ByteTrack attains $\mathrm{HOTA}=66.8\%$ $(0.668)$ on a combined
+ByteTrack attains $\mathrm{HOTA}=0.668$ on a combined
 $3{,}250$-frame evaluation set and outperforms BoT-SORT on HOTA, IDF1,
 and identity-switch count. Team classification reaches mean macro-$F_1 =
 0.993$ across three independent broadcast clips. At tactical level, pass
-detection achieves $F_1=0.903$, all ten flagged offside-position events
-are visually positionally valid, and mean pitch-space reprojection error
+detection achieves $F_1=0.903$, all ten flagged offside-position events are visually verified as positionally valid, 
+and mean pitch-space reprojection error
 of $1.99$\,m supports tactical-scale spatial reasoning.
 
 The main contribution is an end-to-end, reproducible broadcast-analysis
-pipeline that requires no per-match labelling and produces quantitatively
-verifiable tactical outputs. The results show that broadcast-only football
+pipeline that requires no per-match labelling and produces quantitatively evaluated and visually inspectable tactical outputs. 
+The results show that broadcast-only football
 analysis can move beyond detection and tracking towards interpretable
 tactical summaries, while identifying key limitations in homography
 accuracy, possession transitions, and speed estimation.
+
 }
 

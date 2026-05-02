@@ -255,16 +255,16 @@ The two detectors are evaluated on held-out test splits (75 images /
 1{,}875 instances for the generic detector; 119 images / 119 instances
 for the ball detector) using the COCO-style protocol of
 Section~\ref{subsec:background_iou_nms}. Weights were selected by
-validation \texttt{mAP@50:95} (epoch 40 generic, epoch 143 ball).
+validation \texttt{$\mathrm{mAP}_{50-95}$} (epoch 40 generic, epoch 143 ball).
 
 \subsection{Generic four-class detector}
 
-The generic detector achieves a mean test \texttt{mAP@50} of $0.855$
+The generic detector achieves a mean test \texttt{$\mathrm{mAP}_{50}$} of $0.855$
 (Table~\ref{tab:detector_per_class}), exceeding the criterion~(i)
 target of $0.80$. The aggregate masks a sharply bimodal per-class
 distribution: Player, Goalkeeper, and Referee are near-saturated
-($\text{mAP@50} \geq 0.98$, $\text{F1} \geq 0.96$), whereas the Ball
-class reaches only $\text{mAP@50} = 0.459$ at recall $0.39$. The
+($\text{$\mathrm{mAP}_{50}$} \geq 0.98$, $\text{F1} \geq 0.96$), whereas the Ball
+class reaches only $\text{$\mathrm{mAP}_{50}$} = 0.459$ at recall $0.39$. The
 precision--recall curves (Figure~\ref{fig:generic_pr}) confirm this:
 the person classes track the upper envelope while the Ball curve
 collapses below recall $0.8$, isolating small-object localisation as
@@ -275,7 +275,7 @@ the residual challenge.
 \small
 \begin{tabular}{lrrrrr}
 \toprule
-Class & P & R & F1 & mAP@50 & mAP@50:95 \\
+Class & P & R & F1 & $\mathrm{mAP}_{50}$ &$\mathrm{mAP}_{50-95}$ \\
 \midrule
 Ball       & 0.818 & 0.393 & 0.531 & 0.459 & 0.194 \\
 Goalkeeper & 0.953 & 0.983 & 0.968 & 0.982 & 0.808 \\
@@ -288,7 +288,7 @@ Mean       & 0.925 & 0.837 & 0.873 & 0.855 & 0.633 \\
 \caption[Generic detector: per-class test performance.]{Generic
 detector test-set performance. Player, Goalkeeper, and Referee classes
 are near-saturated; the Ball class limits aggregate
-\texttt{mAP@50:95}.}
+\texttt{$\mathrm{mAP}_{50-95}$}.}
 \label{tab:detector_per_class}
 \end{table}
 
@@ -300,7 +300,7 @@ curves for the generic four-class detector on the test split. The
 three person classes (Player, Referee, Goalkeeper) sit on the upper
 envelope of the plot, while the Ball class collapses sharply once
 recall exceeds $0.75$, accounting for the bulk of the gap between
-mean \texttt{mAP@50} and the person-class scores.}
+mean \texttt{$\mathrm{mAP}_{50}$} and the person-class scores.}
 \label{fig:generic_pr}
 \end{figure}
 
@@ -333,8 +333,8 @@ All other off-diagonal mass is below $0.02$.}
 The dedicated ball detector (YOLOv8x, $1280\times1280$, single class,
 150 epochs) was trained to repair this failure.
 Table~\ref{tab:eval_ball_comparison} compares the two on the ball
-class: test \texttt{mAP@50} rises from $0.459$ to $0.950$
-($+49.1$~pp), and operational recall (IoU=$0.45$, conf=$0.25$) from
+class: test \texttt{$\mathrm{mAP}_{50}$} rises from $0.459$ to $0.950$
+($+49.1$~pp), and operational recall (IoU=$0.5$, conf=$0.25$) from
 $0.69$ to $0.95$. The single-class precision--recall curve
 (Figure~\ref{fig:ball_pr}) holds precision $\approx 1.0$ until recall
 $\approx 0.95$, in direct contrast to the Ball curve of
@@ -351,8 +351,8 @@ detections to produce the per-frame ball trajectory.
 \toprule
 Metric & Generic det. & Dedicated det. & $\Delta$ \\
 \midrule
-mAP@50          & 0.459 & 0.950 & $+0.491$ \\
-mAP@50:95       & 0.194 & 0.556 & $+0.362$ \\
+$\mathrm{mAP}_{50}$         & 0.459 & 0.950 & $+0.491$ \\
+$\mathrm{mAP}_{50-95}$       & 0.194 & 0.556 & $+0.362$ \\
 Precision       & 0.818 & 0.964 & $+0.146$ \\
 Recall (PR)     & 0.393 & 0.896 & $+0.503$ \\
 F1              & 0.531 & 0.929 & $+0.398$ \\
@@ -378,7 +378,7 @@ basis for the two-detector architecture.}
 \end{figure}
 
 \paragraph{Ranking with similar work.}
-The generic detector's $0.855$ \texttt{mAP@50} sits within the range
+The generic detector's $0.855$ \texttt{$\mathrm{mAP}_{50}$} sits within the range
 reported on broadcast football benchmarks: SoccerNet~\cite{Cioppa2022}
 reports mean \texttt{AP} between $0.78$ and $0.91$ across
 player-detection submissions, and BroadTrack~\cite{Magera2025} treats
@@ -389,7 +389,7 @@ given that the ball typically occupies $<0.05\%$ of the frame. Direct
 numerical comparison is hedged by dataset differences.
 
 \paragraph{Verdict on success criterion (i).}
-\textbf{Met.} Generic-detector \texttt{mAP@50} = $0.855 \geq 0.80$.
+\textbf{Met.} Generic-detector \texttt{$\mathrm{mAP}_{50}$} = $0.855 \geq 0.80$.
 The Ball-class shortfall is repaired by the dedicated detector
 ($0.950$), whose output is the ball signal consumed downstream.
 
@@ -486,8 +486,8 @@ isolating the data-association stage.
 \toprule
 Tracker & HOTA & MOTA & IDF1 & ID-sw. \\
 \midrule
-ByteTrack & \textbf{66.8} & 88.3 & \textbf{67.8} & \textbf{2867} \\
-BoT-SORT  & 65.7 & \textbf{88.5} & 67.1 & 3929 \\
+ByteTrack & \textbf{0.668} & 0.883 & \textbf{0.678} & \textbf{2867} \\
+BoT-SORT  & 0.657 & \textbf{0.885} & 0.671 & 3929 \\
 \bottomrule
 \end{tabular}
 \caption[Tracker comparison on the combined evaluation
@@ -500,18 +500,18 @@ count; MOTA is essentially tied.}
 \label{tab:tracker_comparison}
 \end{table}
 
-ByteTrack achieves higher HOTA ($66.8$ vs $65.7$) and IDF1 ($67.8$ vs
-$67.1$) and records approximately $27\%$ fewer identity switches
+ByteTrack achieves higher HOTA ($0.668$ vs $0.657$) and IDF1 ($0.678$ vs
+$0.671$) and records approximately $27\%$ fewer identity switches
 ($2{,}867$ vs $3{,}929$); MOTA differs by $0.2$ points and is within
 evaluation noise. ByteTrack is therefore the deployed tracker. Its
 edge is consistent with the design intent of two-stage association on
 low-confidence detections, which preserves identity through the brief
 detection dropouts that broadcast football generates frequently.
 BoT-SORT's camera-motion-compensated Kalman filter does not recover
-the gap on these sequences. The combined-set HOTA of $66.8$ is close
+the gap on these sequences. The combined-set HOTA of $0.668$ is close
 to the SportsMOT results of Cui~et~al.~\cite{Cui2023SportsMOT}:
-ByteTrack reports $62.8$--$64.1$ on the overall test set (Train vs
-Train+Val protocol), and MixSort-Byte reports $66.4$ on the football
+ByteTrack reports $0.628$--$0.641$ on the overall test set (Train vs
+Train+Val protocol), and MixSort-Byte reports $0.664$ on the football
 category specifically.
 
 The dominant residual error in qualitative inspection is identity
@@ -524,7 +524,7 @@ the same-team possession-transition false positives discussed in
 Section~\ref{sec:eval_tactical}.
 
 \paragraph{Verdict on success criterion (ii).}
-\textbf{Met.} Deployed-tracker HOTA is $66.8$ against a target of
+\textbf{Met.} Deployed-tracker HOTA is $0.668$ against a target of
 $0.45$, ranks favourably against the published SportsMOT-football
 benchmarks, and is corroborated by the in-domain broadcast clip;
 residual failures are localised to close-range crossings.
@@ -736,8 +736,8 @@ still well above the threshold.
     \label{fig:team2_crops_clip}
 \end{subfigure}
 
-\caption[Example torso crops from clips~1.]{Example torso crops from
-clips~1. The bright red versus white kit contrast in clip~1 is visually
+\caption[Example torso crops from clip~1.]{Example torso crops from
+clip~1. The bright red versus white kit contrast in clip~1 is visually
 unambiguous, which accounts for the perfect macro-F1 of $1.000$ on this clip
 in both evaluation regimes. The remaining clips involve more similar palettes
 and incur a small number of classification errors.}
@@ -762,7 +762,7 @@ indicating that the result is a property of the embedding space
 rather than any one broadcast. Classical approaches cluster players
 by RGB colour histograms~\cite{Spagnolo2007}, which are cheap but
 sensitive to lighting, shadows, and background pixels in the crop.
-The SigLLIP-based classifier's $0.99{+}$ figures are consistent with the expected gain from
+The SigLIP-based classifier's $0.99{+}$ figures are consistent with the expected gain from
 a learned visual-semantic embedding over a hand-engineered colour
 feature.
 
@@ -902,8 +902,8 @@ governs every downstream pitch-space metric --- speeds, distances,
 possession, offside lines --- so they are evaluated jointly here.
 
 \paragraph{Keypoint detector.}
-The YOLOv8x-pose model achieves test pose \texttt{mAP@50} = $0.995$
-and \texttt{mAP@50:95} = $0.953$ on the 28-image held-out split, with
+The YOLOv8x-pose model achieves test pose \texttt{$\mathrm{mAP}_{50}$} = $0.995$
+and \texttt{$\mathrm{mAP}_{50-95}$} = $0.953$ on the 28-image held-out split, with
 box detection saturated at $P = R = 1.0$. Per-keypoint pixel errors
 (Figure~\ref{fig:per_kp_error}) have a median of $3.7$~px ($0.41\%$
 of the $640$~px image diagonal), with one systematic outlier: kp\_16
@@ -1351,7 +1351,7 @@ Steady-state total            & 1814.85 & 1361.13 & --- \\
 \caption[Per-stage runtime on Apple M2 Pro for a 750-frame
 clip.]{Per-stage steady-state runtime for one $750$-frame broadcast
 clip on Apple~M2~Pro (no discrete GPU). The warm-up phase
-(SigLIP/UMAP/KMeans fit on torso crops) adds a one-off $18.2$~s and
+(SigLIP/UMAP/K-Means fit on torso crops) adds a one-off $18.2$~s and
 is reported separately. Effective throughput is approximately
 $0.55$~fps.}
 \label{tab:runtime_breakdown}
@@ -1456,7 +1456,7 @@ Failure mode & Evidence & Residual risk \\
 \midrule
 Ball missed by generic detector
 & 31\% bg-confusion (\S\ref{sec:eval_detection})
-& Repaired by dedicated detector; ball mAP@50 = $0.950$. \\
+& Repaired by dedicated detector; ball $\mathrm{mAP}_{50}$ = $0.950$. \\
 Goalkeeper-as-Player misclassification
 & 10.3\% on test (\S\ref{sec:eval_detection})
 & Image-space GK resolver corrects team assignment; verified qualitatively (\S\ref{sec:eval_team}). \\
@@ -1559,9 +1559,9 @@ are met (Table~\ref{tab:criteria_summary}).
 \toprule
 \# & Criterion & Threshold & Achieved & Section \\
 \midrule
-i   & Detector mAP@50 & $\geq 0.80$ & $0.855$ generic; $0.950$ ball
+i   & Detector $\mathrm{mAP}_{50}$ & $\geq 0.80$ & $0.855$ generic; $0.950$ ball
     & \S\ref{sec:eval_detection} \\
-ii  & Tracking HOTA & $\geq 0.45$ & $66.8$ (ByteTrack)
+ii  & Tracking HOTA & $\geq 0.45$ & $0.668$ (ByteTrack)
     & \S\ref{sec:eval_tracking} \\
 iii & Team macro-$F_1$ (35/65 split) & $\geq 0.85$ & $0.993$ across three clips
     & \S\ref{sec:eval_team} \\
