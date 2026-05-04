@@ -6,16 +6,16 @@
 
 Data and analytics have become central to professional football, with clubs 
 and national federations adopting analytical methods for performance analysis 
-and decision-making \cite{Lolli2024}. Positional and tracking data are 
+and decision-making~\cite{Lolli2024}. Positional and tracking data are 
 particularly valuable, providing richer descriptions of player movement, 
 team organisation, and tactical behaviour than traditional notational 
-analysis \cite{Goes2021}. Reliable spatial match data is 
+analysis~\cite{Goes2021}. Reliable spatial match data is 
 therefore increasingly important.
 
 Despite this, high-quality football data remain difficult to access outside 
 elite settings. Advanced event and tracking data are often proprietary, 
 expensive, or dependent on specialist collection systems, which limits their 
-availability for public and reproducible work \cite{Ellens2022,Davis2024}. 
+availability for public and reproducible work~\cite{Ellens2022,Davis2024}. 
 This motivates the investigation of alternative ways to generate structured 
 football data from more widely available sources.
 
@@ -28,13 +28,12 @@ stages: detection, tracking, team identification, pitch registration, and
 tactical reasoning. Modern broadcast pipelines typically build on
 single-stage convolutional detectors and tracking-by-detection frameworks,
 an approach this work also adopts; transformer-based alternatives exist
-but are not yet standard in this regime. The interactions between these
-stages determine the reliability of the final outputs
-\cite{Theiner2022,Somers2024}.
+but are not yet standard in this regime~\cite{meinhardt2022trackformer}. The interactions between these
+stages determine the reliability of the final outputs~\cite{Theiner2022,Somers2024}.
 
 Open benchmark efforts such as SoccerNet-Tracking and SoccerNet Game State 
 Reconstruction demonstrate that broadcast football video can support 
-tracking and game-state reconstruction in realistic settings \cite{Cioppa2022,Somers2024}. 
+tracking and game-state reconstruction in realistic settings~\cite{Cioppa2022,Somers2024}. 
 However, these systems typically produce intermediate outputs such as 
 tracked player positions or minimap reconstructions rather than directly 
 usable tactical outputs. What remains missing is a publicly reproducible 
@@ -67,8 +66,8 @@ To achieve this aim, the project pursues the following objectives:
     \item evaluate the pipeline as an end-to-end system, including how errors in detection, tracking, and homography estimation affect downstream analytical outputs.
 \end{itemize}
 
-The project will be considered successful if the following pre-registered
-quantitative thresholds are met:
+The project will be considered successful if the following pre-registered quantitative and qualitative
+evaluation criteria are met:
 
 \begin{enumerate}[label=(\roman*),leftmargin=2.2em]
     \item the main object detector achieves a mean Average Precision
@@ -138,7 +137,7 @@ system level, the pipeline is judged by the quantitative quality of
 its tactical outputs (pass-detection $F_1$, offside positional
 correctness) and by qualitative assessment of bird's-eye and heatmap
 renderings against the source footage, following the approach used in
-recent game-state reconstruction benchmarks \cite{Somers2024}. The
+recent game-state reconstruction benchmark~\cite{Somers2024}. The
 detailed annotation procedures, evaluation sets, and per-component
 methodology are presented in Chapter~\ref{ch:evaluation}.
 

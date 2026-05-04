@@ -13,8 +13,8 @@ that converts broadcast football video into tactical outputs: bird's-eye
 visualisations, heatmaps, possession assignments, pass and offside event
 logs, and per-player match statistics. The system combines a YOLOv8
 four-class detector with a dedicated ball detector, ByteTrack multi-object
-tracking, unsupervised SigLIP--UMAP--K-Means team classification, and a
-YOLOv8-pose pitch-keypoint detector feeding a stride-cached DLT homography
+tracking, unsupervised SigLIP-UMAP-$k$-Means team classification, and a
+YOLOv8-pose pitch-keypoint detector feeding a stride-cached Direct Linear Transform (DLT) homography
 estimator. All downstream reasoning is performed in pitch-space
 coordinates.
 
@@ -25,12 +25,12 @@ ByteTrack attains $\mathrm{HOTA}=0.668$ on a combined
 $3{,}250$-frame evaluation set and outperforms BoT-SORT on HOTA, IDF1,
 and identity-switch count. Team classification reaches mean macro-$F_1 =
 0.993$ across three independent broadcast clips. At tactical level, pass
-detection achieves $F_1=0.903$, all ten flagged offside-position events are visually verified as positionally valid, 
-and mean pitch-space reprojection error
-of $1.99$\,m supports tactical-scale spatial reasoning.
+detection achieves $F_1=0.903$, all ten flagged offside-position events were manually verified as correct, 
+and pitch-space reprojection error remains within the tactical-scale tolerance, 
+with a median error of $169.9$\,cm and a mean error of $199.4$\,cm.
 
 The main contribution is an end-to-end, reproducible broadcast-analysis
-pipeline that requires no per-match labelling and produces quantitatively evaluated and visually inspectable tactical outputs. 
+pipeline that requires no per-match manual labelling at inference time and produces quantitatively evaluated and visually inspectable tactical outputs. 
 The results show that broadcast-only football
 analysis can move beyond detection and tracking towards interpretable
 tactical summaries, while identifying key limitations in homography

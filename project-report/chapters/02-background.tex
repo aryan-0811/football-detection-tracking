@@ -18,9 +18,9 @@ background cannot serve as a fixed spatial reference and
 inter-frame motion cannot be attributed to scene objects alone 
 \cite{Theiner2022}. The ball is small relative to the frame and is frequently 
 blurred, occluded, or temporarily absent, making its detection 
-substantially harder than that of players \cite{Cioppa2022}. Players 
-on the same team share near-identical appearance — uniform 
-colour, similar build — so identity must be inferred from subtle 
+substantially harder than that of players \cite{Cioppa2022, Komorowski2020FootAndBall}. Players 
+on the same team share near-identical appearance, including uniform 
+colour, similar build, so identity must be inferred from subtle 
 spatial and temporal cues \cite{Theiner2022}. Finally, 
 image-space measurements suffer perspective distortion, so 
 quantities such as distance, speed, and tactical position are 
@@ -31,8 +31,8 @@ These constraints have driven the field toward a modular pipeline
 \cite{Theiner2022, Liu2009}: object and ball detection produce 
 per-frame observations; multi-object tracking maintains temporal 
 identity; team assignment recovers affiliation; pitch registration 
-projects coordinates into field space; and higher-level outputs — 
-heatmaps, possession, offside — are computed in pitch coordinates 
+projects coordinates into field space; and higher-level outputs such as 
+heatmaps, possession, offside are computed in pitch coordinates 
 rather than in the image plane.
 
 Formally, the pipeline is a composition of stages,
@@ -103,7 +103,7 @@ game analysis but predates modern deep-learning detectors
 and trackers.
 
 A consistent pattern is that these systems stop at 
-intermediate representations — bounding boxes, tracks, 
+intermediate representations, such as bounding boxes, tracks, 
 registered pitches, or minimap reconstructions. A 
 reconstruction may be visually plausible while still 
 containing localisation, identity, or ball-detection errors 
@@ -152,12 +152,13 @@ project. Cross-entropy is used for classification targets,
     -\sum_{c=1}^{C} y_c \log \hat{y}_c,
 \]
 where \(\hat{y}\) is a predicted distribution over \(C\) 
-classes and \(y\) is a one-hot ground truth. Mean Squared Error (MSE)
-is used for continuous targets such as bounding-box
-coordinates,
+classes and \(y\) is a one-hot ground truth. Mean Squared 
+Error (MSE) is used for continuous targets such as 
+bounding-box coordinates,
 \[
-    \mathcal{L}_{\text{MSE}}(\hat{y}, y) =
-    \lVert \hat{y} - y \rVert_2^{2}.
+    \mathcal{L}_{\text{MSE}} =
+    \frac{1}{N}\sum_{i=1}^{N}
+    \lVert \hat{y}_i - y_i \rVert_2^{2}.
 \]
 Optimisation is performed by stochastic gradient descent 
 or one of its variants, with parameters updated as
@@ -194,7 +195,7 @@ rectified linear unit,
 which is computationally cheap and tends to produce sparse 
 activations that aid optimisation \cite{Goodfellow2016}. A 
 fully-connected network of this form, however, treats an 
-image as a flat vector — which scales poorly with image 
+image as a flat vector, which scales poorly with image 
 size and discards spatial structure. Convolutional 
 architectures, introduced next, address both issues.
 
@@ -593,9 +594,9 @@ matrix \(C \in \mathbb{R}^{m \times n}\) with
 \end{equation}
 where \(\hat{B}_i\) is the predicted box for track \(i\) and 
 \(B_j\) is the box of detection \(j\); lower cost means 
-better match. The Hungarian algorithm solves this assignment 
+better match. The Hungarian algorithm~\cite{Kuhn1955} solves this assignment 
 problem to optimality in \(O(n^3)\) 
-time~\cite{Kuhn1955}. Unmatched detections seed new tracks; 
+time~\cite{EdmondsKarp1972}. Unmatched detections seed new tracks; 
 unmatched tracks are buffered and eventually deleted if not 
 recovered. This Kalman--Hungarian skeleton underlies 
 Simple Online and Realtime Tracking (SORT)~\cite{Bewley2016SORT}, ByteTrack~\cite{ByteTrack}, and
@@ -729,7 +730,7 @@ required by competition rules to be visually distinguishable.
 \label{subsec:team_id_representations}
 
 The classical approach extracts colour histograms in spaces 
-such as Red--Green--Blue (RGB), Hue--Saturation--Value (HSV), or CIE L*a*b* (Lab) and clusters players by histogram
+such as Red-Green-Blue (RGB), Hue-Saturation-Value (HSV), or CIE L*a*b* (Lab) and clusters players by histogram
 similarity~\cite{Spagnolo2007}. Such features are 
 fast, interpretable, and align with the cue humans use, but 
 they are sensitive to lighting changes, shadows, and 
@@ -737,7 +738,7 @@ background pixels included in the crop, and they discard
 spatial structure entirely.
 
 A more robust alternative is to use deep visual embeddings. 
-Modern pretrained encoders such as Contrastive Language--Image Pre-training (CLIP), Sigmoid Loss for Language--Image Pre-training (SigLIP), and
+Modern pretrained encoders such as Contrastive Language-Image Pre-training (CLIP), Sigmoid Loss for Language-Image Pre-training (SigLIP), and
 self-DIstillation with NO labels v2 (DINOv2) learn transferable visual representations from
 internet-scale pre-training~\cite{radford2021clip,SigLIP2023,oquab2024dinov2} 
 and produce embeddings that capture colour, texture, shape, 
@@ -940,7 +941,7 @@ conditioning~\cite{hartley2003multiple} before solving.
 Real correspondences contain both noise and outliers — 
 incorrectly localised keypoints whose error is large 
 enough to corrupt the least-squares estimate. Robust 
-estimators such as Random Sample Consensus (RANSAC) 
+estimators such as Random Sample Consensus (RANSAC)~\cite{fischler1981ransac}
 mitigate this by fitting candidate homographies on minimal 
 correspondence sets and retaining the one with the largest 
 inlier consensus, tolerating outlier rates well above 
@@ -1141,8 +1142,7 @@ on the same team.
 
 More refined formulations such as \emph{pitch 
 control}~\cite{fernandez2018wide} weight each player's 
-influence over the pitch by position, velocity, and 
-orientation, capturing dynamic context such as momentum, reach, 
+influence over the pitch by position and velocity, capturing dynamic context such as momentum, reach, 
 time-to-arrive that nearest-player assignment ignores. 
 This expressiveness comes at the cost of requiring reliable 
 per-player velocities and orientations, which in turn 

@@ -127,12 +127,12 @@ visual encoder fine-tuned on the warmup-phase clusters. Either alone would recov
 roughly half the team-classifier cost, bringing throughput close to 1\,fps on the
 M2 Pro reference hardware.
 
-\textit{Real-time deployment.} The remaining ten-fold gap to live throughput on
+\textit{Real-time deployment.} The remaining gap to live throughput on
 consumer hardware is dominated by the ball detector at $1280\times1280$
 (Section~\ref{sec:eval_runtime}). 8-bit integer (INT8) post-training quantisation combined with
 substitution of the current detector backbone for a lighter YOLO variant (the
-\texttt{s} or \texttt{n} configurations) trades approximately 3--5 percentage points of
-mAP for an order-of-magnitude throughput gain, and would bring live broadcast analysis
+\texttt{s} or \texttt{n} configurations) trades a modest mAP cost for an order-of-magnitude throughput gain
+, and would bring live broadcast analysis
 within reach of mid-tier consumer GPUs without disturbing the rest of the pipeline.
 
 \textit{A hand-labelled multi-clip benchmark.} Every claim above would benefit from
